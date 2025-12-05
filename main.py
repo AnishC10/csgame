@@ -1,868 +1,866 @@
 """
-StoryQuest+ — Twin Guardians (Arcade 3.x, single-file)
+StoryQuest++ — Arena Roguelite (Clarity Pass, Arcade 3.x)
 
-New stuff:
-  • Mouse aiming + crosshair
-  • Dash (SHIFT) with invulnerability frames (i-frames)
-  • Combo multiplier that decays if you get hit / wait too long
-  • Power-ups: Heal, Shield, RapidFire, Spread (auto-spawn + boss drops)
-  • Minions in Stage 2
-  • Telegraphs (danger zones) for big boss attacks
-  • Pause/Resume (ESC), Restart (R), Menu (M)
+Visual clarity & UX upgrades:
+  • High-contrast HUD with text shadows
+  • Subtle gradient + grid background (no assets)
+  • Telegraphs: filled translucent discs + thick outlines
+  • Player/enemy crisp outlines and brighter projectiles
+  • Particle alpha decay (cleaner bursts, less smear)
+  • Pixel snapping on sprite positions to avoid blur
+  • Larger, consistent font sizes; improved spacing
 
 Controls:
-  Move: WASD / Arrows
-  Shoot: SPACE or Left Click (mouse aimed)
-  Melee: Z (short range, small AOE)
-  Dash: Left Shift (i-frames + burst speed)
-  Pause: ESC
+  Move:   WASD / Arrows
+  Shoot:  SPACE or Left Click (hold)
+  Dash:   Left Shift (i-frames)
+  Pause:  ESC
+  Restart (from pause/over): R
+  Menu:   M
 """
 
 import arcade
 import math
 import random
-from typing import Optional
+import time
+from typing import Optional, List, Tuple
 
-# ------------------ Window / globals ------------------
-SCREEN_WIDTH = 960
-SCREEN_HEIGHT = 600
-SCREEN_TITLE = "StoryQuest+ : The Twin Guardians"
+# ---------------- Window / arena ----------------
+SCREEN_WIDTH  = 1000
+SCREEN_HEIGHT = 640
+SCREEN_TITLE  = "StoryQuest++ — Arena Roguelite (Clarity)"
 
-# Player
-PLAYER_RADIUS = 20
-PLAYER_SPEED = 4.2
-PLAYER_MAX_HEALTH = 8
-PLAYER_DASH_SPEED = 10.0
-PLAYER_DASH_TIME = 0.18
-PLAYER_DASH_COOLDOWN = 1.1
-PLAYER_IFRAME_TIME = 0.35  # includes dash duration
-PLAYER_MELEE_RANGE = 40
-PLAYER_MELEE_DAMAGE = 2
-PLAYER_MELEE_COOLDOWN = 0.55
+ARENA_MARGIN = 48
+GROUND_Y     = 56
+GRID_SPACING = 32
 
-# Shooting
-BULLET_SPEED = 10.0
-BULLET_COOLDOWN = 0.28
-SPREAD_ANGLE = math.radians(10)
+# ---------------- Player ----------------
+PLAYER_RADIUS         = 19
+PLAYER_MAX_HP         = 9
+PLAYER_BASE_SPEED     = 4.0
+PLAYER_BASE_DASH_SPEED= 12.0
+PLAYER_DASH_TIME      = 0.18
+PLAYER_DASH_IFRAME    = 0.36
+PLAYER_DASH_CD        = 1.2
 
-# Boss / game
-BOSS_COUNT = 2
-BG_COLOR = arcade.color.DARK_SLATE_BLUE
-UI_COLOR = arcade.color.ALMOND
+# ---------------- Weapons ----------------
+BASE_BULLET_SPEED = 11.5
+BASE_FIRE_CD      = 0.26
+BASE_DAMAGE       = 3
+SHOTGUN_SPREAD    = math.radians(12)
+SHOTGUN_PELLETS   = 5
 
-# Power-ups
-POWERUP_DROP_PERIOD = (6.0, 9.0)  # random seconds
-POWERUP_DURATION = 7.0
-POWERUP_TYPES = ("HEAL", "SHIELD", "RAPID", "SPREAD")
-HEAL_AMOUNT = 2
+# ---------------- XP / Perks ----------------
+XP_PER_WAVE_CLEAR = 6
+XP_ORB_VALUE      = 1
+XP_TO_LEVEL_BASE  = 5
 
-# Combo
-COMBO_WINDOW = 3.0  # seconds to extend combo
-COMBO_MAX = 5
+# ---------------- Waves ----------------
+TOTAL_WAVES = 5
 
-# Telegraphs
-TELEGRAPH_TIME = 0.9  # how long a danger zone shows before firing
+# ---------------- Colors ----------------
+BG_TOP     = (26, 33, 53)     # darker slate
+BG_BOTTOM  = (39, 48, 77)     # lighter slate
+GRID_COLOR = (255, 255, 255, 18)
+UI_COLOR   = arcade.color.ALMOND
+TEXT_SHADOW= (0, 0, 0, 180)
 
-# Utility ------------------------------------------------
+DANGER_FILL = (255, 140, 0, 40)    # translucent orange
+DANGER_EDGE = arcade.color.YELLOW_ORANGE
+
+BULLET_COLOR_PLAYER = arcade.color.BANANA_YELLOW
+BULLET_COLOR_ENEMY  = arcade.color.LIGHT_SALMON
+
+PLAYER_BODY = arcade.color.CYAN
+PLAYER_OUT  = arcade.color.WHITE
+
+CHASER_BODY = arcade.color.DARK_ORANGE
+SHOOTR_BODY = arcade.color.DARK_CERULEAN
+BOMBER_BODY = arcade.color.BRICK_RED
+ENEMY_OUT   = arcade.color.WHITE
+
+BOSS_BODY   = arcade.color.ORANGE_RED
+BOSS_OUT    = arcade.color.WHITE
+
+# ---------------- Helpers ----------------
+def clamp(v, a, b): 
+    return a if v < a else b if v > b else v
+
+def snap(x: float) -> float:
+    """Pixel snap to avoid sub-pixel blur on lines/sprites."""
+    return float(int(round(x)))
+
+def text_shadowed(text, x, y, color, size=16, anchor_x="left", anchor_y="baseline"):
+    # shadow
+    arcade.draw_text(text, x+1, y-1, TEXT_SHADOW, size, anchor_x=anchor_x, anchor_y=anchor_y)
+    # main
+    arcade.draw_text(text, x,   y,   color,       size, anchor_x=anchor_x, anchor_y=anchor_y)
+
 class Timer:
-    def __init__(self, cooldown: float = 0.0):
-        self.cooldown = cooldown
-        self.t = 0.0
-
-    def set(self, val: float):
-        self.t = max(0.0, val)
-
-    def trigger(self):
-        self.t = self.cooldown
-
-    def ready(self) -> bool:
-        return self.t <= 0.0
-
-    def update(self, dt: float):
-        if self.t > 0.0:
+    def __init__(self, cd=0.0): self.cd, self.t = cd, 0.0
+    def set(self, val: float): self.t = max(0.0, val)
+    def ready(self): return self.t <= 0.0
+    def trigger(self): self.t = self.cd
+    def update(self, dt): 
+        if self.t > 0: 
             self.t -= dt
-            if self.t < 0.0:
-                self.t = 0.0
+            if self.t < 0: self.t = 0
 
+# ---------------- Perks ----------------
+class Perk:
+    def __init__(self, name, desc, apply_fn):
+        self.name = name; self.desc = desc; self.apply = apply_fn
 
-# ------------------ Views ------------------
-class MenuView(arcade.View):
-    def on_show(self):
-        arcade.set_background_color(BG_COLOR)
+def perk_pool():
+    pool = []
+    pool.append(Perk("Damage +2", "Increase bullet damage by 2.", lambda p: setattr(p, "damage", p.damage + 2)))
+    pool.append(Perk("Fire Rate +20%", "Shoot faster.", lambda p: setattr(p, "fire_cd", p.fire_cd * 0.8)))
+    pool.append(Perk("Spread Shot", "Shotgun: +pellets, cone spread.", lambda p: setattr(p, "has_spread", True)))
+    pool.append(Perk("Dash Mastery", "Dash CD -25%, +20% i-frames.", lambda p: (setattr(p, "dash_cd", p.dash_cd * 0.75),
+                                                                                setattr(p, "dash_iframe", p.dash_iframe * 1.2))))
+    pool.append(Perk("Crit 15%", "15% crit chance (x2 dmg).", lambda p: setattr(p, "crit_chance", min(1.0, p.crit_chance + 0.15))))
+    pool.append(Perk("Burn", "Hits ignite for DoT.", lambda p: setattr(p, "burn_on_hit", True)))
+    pool.append(Perk("Slow", "Hits slow briefly.", lambda p: setattr(p, "slow_on_hit", True)))
+    pool.append(Perk("Regen", "Heal 1 HP every 8s out of combat.", lambda p: setattr(p, "regen_on", True)))
+    pool.append(Perk("Magnet", "Bigger XP pickup radius.", lambda p: setattr(p, "magnet_radius", p.magnet_radius + 40)))
+    return pool
 
-    def on_draw(self):
-        self.clear()
-        arcade.draw_text("STORYQUEST+ : THE TWIN GUARDIANS", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.68,
-                         arcade.color.GOLD, 36, anchor_x="center")
-        arcade.draw_text("Mouse aim • Dash (SHIFT) • Power-ups • Minions • Combo", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.6,
-                         arcade.color.LIGHT_GRAY, 16, anchor_x="center")
-        arcade.draw_text("Controls: WASD/Arrows to move, SPACE/LeftClick to shoot, Z melee, SHIFT dash, ESC pause",
-                         SCREEN_WIDTH/2, SCREEN_HEIGHT*0.53, arcade.color.WHITE, 12, anchor_x="center")
-        arcade.draw_text("Press ENTER to Start", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.32,
-                         arcade.color.LIGHT_GREEN, 22, anchor_x="center")
-        arcade.draw_text("Press ESC to Quit", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.26,
-                         arcade.color.LIGHT_GRAY, 14, anchor_x="center")
-
-    def on_key_press(self, key, modifiers):
-        if key in (arcade.key.ENTER, arcade.key.RETURN):
-            story = StoryView(stage=1)
-            self.window.show_view(story)
-        elif key == arcade.key.ESCAPE:
-            arcade.close_window()
-
-
-class StoryView(arcade.View):
-    STORIES = {
-        1: [
-            "You are Arin, a courier with a secret blade.",
-            "An ancient guardian blocks the forest pass.",
-            "Defeat it to reach the twin at the peak.",
-            "Steel your will..."
-        ],
-        2: [
-            "The first guardian falls. The summit nears.",
-            "The twin is faster, crueler—and it never fights alone.",
-            "Learn its tells. Punish its patterns.",
-            "Breathe. Then strike."
-        ],
-    }
-
-    def __init__(self, stage: int):
-        super().__init__()
-        self.stage = stage
-        self.index = 0
-
-    def on_show(self):
-        arcade.set_background_color(BG_COLOR)
-
-    def on_draw(self):
-        self.clear()
-        arcade.draw_text(f"Stage {self.stage}", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.68,
-                         arcade.color.BEIGE, 28, anchor_x="center")
-        arcade.draw_rectangle_filled(SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 20, 780, 180,
-                                     (*arcade.color.BLACK, 190))
-        arcade.draw_text(self.STORIES[self.stage][self.index],
-                         SCREEN_WIDTH/2 - 360, SCREEN_HEIGHT/2 - 10,
-                         arcade.color.WHITE, 18)
-        arcade.draw_text("Press ENTER to continue",
-                         SCREEN_WIDTH/2, SCREEN_HEIGHT*0.18,
-                         arcade.color.LIGHT_GRAY, 12, anchor_x="center")
-
-    def on_key_press(self, key, modifiers):
-        if key in (arcade.key.ENTER, arcade.key.RETURN):
-            self.index += 1
-            if self.index >= len(self.STORIES[self.stage]):
-                game = GameView(stage=self.stage)
-                game.setup()
-                self.window.show_view(game)
-
-
-# ------------------ Sprites ------------------
+# ---------------- Sprites ----------------
 class Player(arcade.SpriteCircle):
     def __init__(self):
-        super().__init__(PLAYER_RADIUS, arcade.color.CYAN)
-        self.health = PLAYER_MAX_HEALTH
+        super().__init__(PLAYER_RADIUS, PLAYER_BODY)
+        self.hp_max = PLAYER_MAX_HP
+        self.hp     = self.hp_max
+        self.speed  = PLAYER_BASE_SPEED
+
+        self.damage       = BASE_DAMAGE
+        self.fire_cd      = BASE_FIRE_CD
+        self.bullet_speed = BASE_BULLET_SPEED
+
+        self.has_spread   = False
+        self.crit_chance  = 0.0
+        self.burn_on_hit  = False
+        self.slow_on_hit  = False
+        self.regen_on     = False
+        self.regen_timer  = 8.0
+        self.magnet_radius= 90
+
         self.aim_x = SCREEN_WIDTH/2
         self.aim_y = SCREEN_HEIGHT/2
-        self.iframes = 0.0
-        self.dashing = 0.0
-        self.shield = 0.0  # time left
-        self.spread = 0.0
-        self.rapid = 0.0
-        self.combo = 1
-        self.combo_timer = 0.0
 
-    def facing_vec(self):
-        dx = self.aim_x - self.center_x
-        dy = self.aim_y - self.center_y
+        self.dash_speed = PLAYER_BASE_DASH_SPEED
+        self.dash_time  = PLAYER_DASH_TIME
+        self.dash_iframe= PLAYER_DASH_IFRAME
+        self.dashing    = 0.0
+        self.iframes    = 0.0
+        self.dash_cd    = PLAYER_DASH_CD
+
+        self.combo   = 1
+        self.combo_t = 0.0
+
+    def facing(self) -> Tuple[float,float]:
+        dx, dy = self.aim_x - self.center_x, self.aim_y - self.center_y
         d = math.hypot(dx, dy) or 1.0
         return dx/d, dy/d
 
-    def update_invuln(self, dt):
-        if self.iframes > 0:
-            self.iframes -= dt
-            if self.iframes < 0:
-                self.iframes = 0
-        if self.dashing > 0:
-            self.dashing -= dt
-            if self.dashing < 0:
-                self.dashing = 0
-        if self.shield > 0:
-            self.shield -= dt
-        if self.spread > 0:
-            self.spread -= dt
-        if self.rapid > 0:
-            self.rapid -= dt
-        if self.combo_timer > 0:
-            self.combo_timer -= dt
-            if self.combo_timer <= 0:
-                self.combo = 1
+    def update_timers(self, dt):
+        if self.dashing > 0: self.dashing -= dt
+        if self.iframes > 0: self.iframes -= dt
+        if self.combo_t > 0:
+            self.combo_t -= dt
+            if self.combo_t <= 0: self.combo, self.combo_t = 1, 0.0
+        if self.regen_on:
+            self.regen_timer -= dt
+            if self.regen_timer <= 0 and self.hp < self.hp_max:
+                self.hp += 1
+                self.regen_timer = 8.0
 
-    def take_hit(self, dmg: int):
-        if self.iframes > 0 or self.shield > 0:
-            # shield absorbs 1 instance entirely and drops
-            if self.shield > 0:
-                self.shield = 0
+    def take_hit(self, dmg):
+        if self.iframes > 0: 
             return False
-        self.health -= dmg
+        self.hp -= dmg
         self.combo = 1
-        self.combo_timer = 0.0
+        self.combo_t = 0
         return True
 
+class Enemy(arcade.SpriteCircle):
+    def __init__(self, r, color):
+        super().__init__(r, color)
+        self.hp = 1; self.max_hp = 1
+        self.slow_t = 0.0
+        self.burn_t = 0.0
+        self.burn_tick = 0.0
+    def apply_status(self, burn: bool, slow: bool):
+        if burn: self.burn_t = max(self.burn_t, 2.0)
+        if slow: self.slow_t = max(self.slow_t, 1.2)
+    def update_status(self, dt, apply_burn_damage):
+        if self.slow_t > 0: self.slow_t -= dt
+        if self.burn_t > 0:
+            self.burn_t -= dt
+            self.burn_tick -= dt
+            if self.burn_tick <= 0:
+                self.burn_tick = 0.5
+                apply_burn_damage(1)
 
-class Boss(arcade.SpriteCircle):
-    def __init__(self, stage: int):
-        size = 38 + 10 * stage
-        color = arcade.color.RED if stage == 1 else arcade.color.ORANGE_RED
-        super().__init__(size, color)
-        self.stage = stage
-        self.max_health = 40 + (stage - 1) * 28
-        self.health = self.max_health
-        self.phase = 0
-        self.phase_timer = 0.0
-        self.telegraphs = []  # list of (x,y,r,time_left,type)
+class Chaser(Enemy):
+    def __init__(self, x, y):
+        super().__init__(12, CHASER_BODY)
+        self.center_x, self.center_y = x, y
+        self.hp = self.max_hp = 5
+    def step(self, player: Player, dt):
+        dx, dy = player.center_x - self.center_x, player.center_y - self.center_y
+        d = math.hypot(dx, dy) or 1
+        s = 2.5 * (0.6 if self.slow_t>0 else 1.0)
+        self.center_x = snap(self.center_x + (dx/d) * s)
+        self.center_y = snap(self.center_y + (dy/d) * s)
 
-    def hp_norm(self):
-        return max(0.0, self.health / self.max_health)
+class Shooter(Enemy):
+    def __init__(self, x, y):
+        super().__init__(12, SHOOTR_BODY)
+        self.center_x, self.center_y = x, y
+        self.hp = self.max_hp = 7
+        self.t = 0.0
+    def step(self, player: Player, dt):
+        self.t += dt
+        self.center_x = snap(self.center_x + math.sin(self.t*1.5) * (1.6 if self.slow_t<=0 else 0.8))
+        self.center_y = snap(self.center_y + math.cos(self.t*1.1) * 0.4)
 
+class Bomber(Enemy):
+    def __init__(self, x, y):
+        super().__init__(13, BOMBER_BODY)
+        self.center_x, self.center_y = x, y
+        self.hp = self.max_hp = 8
+        self.telegraphs: List[Tuple[float,float,float,float,str]] = []
+        self.t = 0.0
+    def step(self, player: Player, dt):
+        self.t += dt
+        self.center_y = snap(self.center_y - (1.1 if self.slow_t<=0 else 0.6))
 
 class Bullet(arcade.SpriteCircle):
-    def __init__(self, x, y, dx, dy, speed, color, owner="player", radius=3):
+    def __init__(self, x, y, dx, dy, speed, color, owner: str, radius=3):
         super().__init__(radius, color)
-        self.center_x = x
-        self.center_y = y
-        self.change_x = dx * speed
-        self.change_y = dy * speed
+        self.center_x, self.center_y = x, y
+        self.change_x, self.change_y = dx*speed, dy*speed
         self.owner = owner
 
-
-class PowerUp(arcade.SpriteCircle):
-    COLOR_MAP = {
-        "HEAL": arcade.color.SPRING_BUD,
-        "SHIELD": arcade.color.LIGHT_SKY_BLUE,
-        "RAPID": arcade.color.PALE_GOLDENROD,
-        "SPREAD": arcade.color.PLUM,
-    }
-    def __init__(self, kind: str, x: float, y: float):
-        super().__init__(10, PowerUp.COLOR_MAP[kind])
-        self.kind = kind
-        self.center_x = x
-        self.center_y = y
-        self.vy = -0.5
-
-    def update(self):
-        self.center_y += self.vy
-        if self.bottom < 62:
-            self.bottom = 62
-            self.vy = 0.2  # bounce a bit
-        else:
-            self.vy *= 0.98
-
-
-class Minion(arcade.SpriteCircle):
+class XPOrb(arcade.SpriteCircle):
     def __init__(self, x, y):
-        super().__init__(12, arcade.color.DARK_ORANGE)
-        self.center_x = x
-        self.center_y = y
-        self.health = 3
-        self.phase = 0.0
+        super().__init__(6, arcade.color.SPRING_BUD)
+        self.center_x, self.center_y = x, y
+        self.vx = random.uniform(-0.8,0.8)
+        self.vy = random.uniform(0.6,1.2)
+    def update(self):
+        self.center_x += self.vx
+        self.center_y += self.vy
+        self.vx *= 0.98
+        self.vy = self.vy*0.98 - 0.02
 
-    def update_logic(self, player: Player, dt: float):
-        self.phase += dt
-        # orbit-ish wobble + home in
-        dx = player.center_x - self.center_x
-        dy = player.center_y - self.center_y
-        d = math.hypot(dx, dy) or 1.0
-        sx, sy = dx/d, dy/d
-        self.center_x += sx * 1.8 + math.sin(self.phase*3.0) * 0.8
-        self.center_y += sy * 1.8 + math.cos(self.phase*2.2) * 0.6
+class Boss(arcade.SpriteCircle):
+    def __init__(self):
+        super().__init__(44, BOSS_BODY)
+        self.center_x = SCREEN_WIDTH/2
+        self.center_y = SCREEN_HEIGHT-150
+        self.max_hp = 220; self.hp = self.max_hp
+        self.phase_timer = 0.0
+        self.telegraphs: List[Tuple[float,float,float,float,str]] = []
+        self.phase = 1
+    def hp_norm(self): return max(0.0, self.hp / self.max_hp)
 
-
-# ------------------ Game View ------------------
-class GameView(arcade.View):
-    def __init__(self, stage: int = 1):
-        super().__init__()
-        self.stage = stage
-
-        # Sprites/lists
-        self.player_list = arcade.SpriteList()
-        self.boss_list = arcade.SpriteList()
-        self.player_bullets = arcade.SpriteList()
-        self.enemy_bullets = arcade.SpriteList()
-        self.particles = arcade.SpriteList()
-        self.powerups = arcade.SpriteList()
-        self.minions = arcade.SpriteList()
-
-        self.player: Optional[Player] = None
-        self.boss: Optional[Boss] = None
-
-        # Input state
-        self.up = self.down = self.left = self.right = False
-        self.shoot_hold = False
-
-        # Timers
-        self.shoot_cd = Timer(BULLET_COOLDOWN)
-        self.melee_cd = Timer(PLAYER_MELEE_COOLDOWN)
-        self.dash_cd = Timer(PLAYER_DASH_COOLDOWN)
-        self.powerup_spawn_t = random.uniform(*POWERUP_DROP_PERIOD)
-
-        # State
-        self.score = 0
-        self.win = False
-        self.game_over = False
-        self.paused = False
-        self.intro_timer = 0.7
-
-    # ---------- Setup ----------
-    def setup(self):
-        arcade.set_background_color(BG_COLOR)
-
-        self.player_list = arcade.SpriteList()
-        self.boss_list = arcade.SpriteList()
-        self.player_bullets = arcade.SpriteList()
-        self.enemy_bullets = arcade.SpriteList()
-        self.particles = arcade.SpriteList()
-        self.powerups = arcade.SpriteList()
-        self.minions = arcade.SpriteList()
-
-        self.player = Player()
-        self.player.center_x = SCREEN_WIDTH // 2
-        self.player.center_y = 100
-        self.player_list.append(self.player)
-
-        self.boss = Boss(self.stage)
-        self.boss.center_x = SCREEN_WIDTH // 2
-        self.boss.center_y = SCREEN_HEIGHT - (130 if self.stage == 1 else 150)
-        self.boss_list.append(self.boss)
-
-        self.score = 0
-        self.win = False
-        self.game_over = False
-        self.paused = False
-        self.intro_timer = 0.8
-
-        self.shoot_cd.set(0.0)
-        self.melee_cd.set(0.0)
-        self.dash_cd.set(0.0)
-        self.player.combo = 1
-        self.player.combo_timer = 0.0
-
-    # ---------- Draw ----------
+# ---------------- Views ----------------
+class MenuView(arcade.View):
+    def on_show(self):
+        arcade.set_background_color(BG_BOTTOM)
     def on_draw(self):
         self.clear()
+        self._draw_background()
+        text_shadowed("STORYQUEST++", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.68, arcade.color.GOLD, 40, anchor_x="center")
+        text_shadowed("Clarity pass: higher contrast HUD • sharper telegraphs • cleaner visuals", 
+                      SCREEN_WIDTH/2, SCREEN_HEIGHT*0.60, arcade.color.LIGHT_GRAY, 16, anchor_x="center")
+        text_shadowed("WASD move • SPACE/LeftClick shoot • LSHIFT dash • ESC pause",
+                      SCREEN_WIDTH/2, SCREEN_HEIGHT*0.54, arcade.color.WHITE, 12, anchor_x="center")
+        text_shadowed("Press ENTER to Start", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.30, arcade.color.LIGHT_GREEN, 22, anchor_x="center")
+        text_shadowed("Press ESC to Quit", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.25, arcade.color.LIGHT_GRAY, 14, anchor_x="center")
+    def _draw_background(self):
+        # Gradient
+        arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT, BG_BOTTOM)
+        arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, SCREEN_HEIGHT*0.55, SCREEN_HEIGHT, BG_TOP)
+        # Grid
+        for x in range(ARENA_MARGIN, SCREEN_WIDTH-ARENA_MARGIN+1, GRID_SPACING):
+            arcade.draw_line(x, GROUND_Y, x, SCREEN_HEIGHT-ARENA_MARGIN, GRID_COLOR, 1)
+        for y in range(GROUND_Y, SCREEN_HEIGHT-ARENA_MARGIN+1, GRID_SPACING):
+            arcade.draw_line(ARENA_MARGIN, y, SCREEN_WIDTH-ARENA_MARGIN, y, GRID_COLOR, 1)
+    def on_key_press(self, key, modifiers):
+        if key in (arcade.key.ENTER, arcade.key.RETURN):
+            gv = GameView(); gv.setup(); self.window.show_view(gv)
+        elif key == arcade.key.ESCAPE:
+            arcade.close_window()
 
-        # Background + ground
-        arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT, BG_COLOR)
-        arcade.draw_rectangle_filled(SCREEN_WIDTH/2, 56, SCREEN_WIDTH-40, 112, arcade.color.DARK_OLIVE_GREEN)
+class PerkDraftView(arcade.View):
+    def __init__(self, game: "GameView", options: List[Perk]):
+        super().__init__()
+        self.game = game
+        self.options = options
+        self.selected = 0
+    def on_show(self):
+        arcade.set_background_color(BG_BOTTOM)
+    def on_draw(self):
+        self.clear()
+        self._draw_background()
+        text_shadowed("Choose a Perk", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.72, arcade.color.GOLD, 28, anchor_x="center")
+        for i, perk in enumerate(self.options):
+            y = SCREEN_HEIGHT*0.52 - i*84
+            col = arcade.color.LIGHT_GREEN if i==self.selected else arcade.color.LIGHT_GRAY
+            arcade.draw_rectangle_filled(SCREEN_WIDTH/2, y, 680, 64, (0,0,0,140))
+            text_shadowed(perk.name, SCREEN_WIDTH/2 - 320, y+12, col, 18)
+            text_shadowed(perk.desc, SCREEN_WIDTH/2 - 320, y-12, arcade.color.WHITE, 12)
+        text_shadowed("↑/↓ to select • ENTER to confirm", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.20, arcade.color.WHITE, 12, anchor_x="center")
+    def _draw_background(self):
+        arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT, BG_BOTTOM)
+        arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, SCREEN_HEIGHT*0.55, SCREEN_HEIGHT, BG_TOP)
+    def on_key_press(self, key, modifiers):
+        if key in (arcade.key.UP, arcade.key.W): self.selected = (self.selected - 1) % len(self.options)
+        elif key in (arcade.key.DOWN, arcade.key.S): self.selected = (self.selected + 1) % len(self.options)
+        elif key in (arcade.key.ENTER, arcade.key.RETURN):
+            self.options[self.selected].apply(self.game.player)
+            self.window.show_view(self.game)
 
-        # Danger telegraphs
+class GameOverView(arcade.View):
+    def __init__(self, score: int, win: bool, seconds: float):
+        super().__init__()
+        self.score = score; self.win = win; self.seconds = seconds
+    def on_show(self):
+        arcade.set_background_color(BG_BOTTOM)
+    def on_draw(self):
+        self.clear()
+        arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT, BG_BOTTOM)
+        title = "VICTORY!" if self.win else "DEFEAT"
+        color = arcade.color.LIGHT_GREEN if self.win else arcade.color.SALMON
+        text_shadowed(title, SCREEN_WIDTH/2, SCREEN_HEIGHT*0.64, color, 40, anchor_x="center")
+        text_shadowed(f"Score: {self.score}", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.54, arcade.color.WHITE, 18, anchor_x="center")
+        text_shadowed(f"Time: {int(self.seconds)}s", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.48, arcade.color.WHITE, 16, anchor_x="center")
+        text_shadowed("R: Replay   M: Menu   ESC: Quit", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.34, arcade.color.LIGHT_GRAY, 16, anchor_x="center")
+    def on_key_press(self, key, modifiers):
+        if key == arcade.key.R:
+            g = GameView(); g.setup(); self.window.show_view(g)
+        elif key == arcade.key.M:
+            self.window.show_view(MenuView())
+        elif key == arcade.key.ESCAPE:
+            arcade.close_window()
+
+# ---------------- Game View ----------------
+class GameView(arcade.View):
+    def __init__(self):
+        super().__init__()
+        self.player: Optional[Player] = None
+        self.player_list = arcade.SpriteList()
+        self.enemy_list  = arcade.SpriteList()
+        self.boss_list   = arcade.SpriteList()
+        self.bullets     = arcade.SpriteList()
+        self.enemy_bullets = arcade.SpriteList()
+        self.xp_orbs     = arcade.SpriteList()
+        self.particles   = arcade.SpriteList()
+
+        self.up=self.down=self.left=self.right=0
+        self.shoot_hold=False
+
+        self.fire_timer = Timer(BASE_FIRE_CD)
+        self.dash_timer = Timer(PLAYER_DASH_CD)
+
+        self.wave = 1
+        self.wave_active = True
+        self.wave_clear_bonus_pending = False
+
+        self.xp = 0
+        self.level = 1
+        self.score = 0
+        self.paused = False
+        self.start_time = 0.0
+        self.end_time = 0.0
+
+        self.intro_t = 0.9
+
+    # ---------- setup ----------
+    def setup(self):
+        arcade.set_background_color(BG_BOTTOM)
+        self.player_list = arcade.SpriteList()
+        self.enemy_list  = arcade.SpriteList()
+        self.boss_list   = arcade.SpriteList()
+        self.bullets     = arcade.SpriteList()
+        self.enemy_bullets = arcade.SpriteList()
+        self.xp_orbs     = arcade.SpriteList()
+        self.particles   = arcade.SpriteList()
+
+        self.player = Player()
+        self.player.center_x = SCREEN_WIDTH/2
+        self.player.center_y = GROUND_Y + 60
+        self.player_list.append(self.player)
+
+        self.fire_timer = Timer(self.player.fire_cd)
+        self.dash_timer = Timer(self.player.dash_cd)
+
+        self.wave = 1
+        self.wave_active = True
+        self.wave_clear_bonus_pending = False
+        self.xp = 0
+        self.level = 1
+        self.score = 0
+        self.paused = False
+        self.intro_t = 0.9
+        self.start_time = time.time()
+
+        self._spawn_wave(self.wave)
+
+    # ---------- spawning ----------
+    def _spawn_wave(self, w):
+        rngx = lambda: random.randint(ARENA_MARGIN, SCREEN_WIDTH-ARENA_MARGIN)
+        top = SCREEN_HEIGHT - 80
+        if w < TOTAL_WAVES:
+            for _ in range(4 + w):
+                self.enemy_list.append(Chaser(rngx(), top))
+            for _ in range(2 + w//2):
+                self.enemy_list.append(Shooter(rngx(), top - random.randint(0,120)))
+            for _ in range(1 + (w//2)):
+                self.enemy_list.append(Bomber(rngx(), top - random.randint(40,140)))
+        else:
+            self.boss_list.append(Boss())
+
+    # ---------- drawing ----------
+    def _draw_background(self):
+        # Gradient sky
+        arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT, BG_BOTTOM)
+        arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, SCREEN_HEIGHT*0.55, SCREEN_HEIGHT, BG_TOP)
+        # Ground slab
+        arcade.draw_rectangle_filled(SCREEN_WIDTH/2, GROUND_Y, SCREEN_WIDTH-40, 92, arcade.color.DARK_OLIVE_GREEN)
+        # Arena border
+        arcade.draw_lrbt_rectangle_outline(ARENA_MARGIN, SCREEN_WIDTH-ARENA_MARGIN, GROUND_Y, SCREEN_HEIGHT-ARENA_MARGIN, arcade.color.WHITE, 2)
+        # Grid lines inside arena (subtle)
+        for x in range(ARENA_MARGIN, SCREEN_WIDTH-ARENA_MARGIN+1, GRID_SPACING):
+            arcade.draw_line(x, GROUND_Y, x, SCREEN_HEIGHT-ARENA_MARGIN, GRID_COLOR, 1)
+        for y in range(GROUND_Y, SCREEN_HEIGHT-ARENA_MARGIN+1, GRID_SPACING):
+            arcade.draw_line(ARENA_MARGIN, y, SCREEN_WIDTH-ARENA_MARGIN, y, GRID_COLOR, 1)
+
+    def _draw_telegraphs(self):
+        # Bombers
+        for e in self.enemy_list:
+            if isinstance(e, Bomber):
+                for (x,y,r,t,kind) in e.telegraphs:
+                    alpha = int(60 + 120*(t/0.9))
+                    arcade.draw_circle_filled(x, y, r, DANGER_FILL)
+                    arcade.draw_circle_outline(x, y, r, (*DANGER_EDGE[:3], alpha), 3)
+        # Boss
+        for b in self.boss_list:
+            for (x,y,r,t,kind) in b.telegraphs:
+                alpha = int(60 + 120*(t/0.9))
+                arcade.draw_circle_filled(x, y, r, DANGER_FILL)
+                arcade.draw_circle_outline(x, y, r, (*DANGER_EDGE[:3], alpha), 3)
+
+    def _draw_player_outline(self):
+        # simple white outline for clarity
+        arcade.draw_circle_outline(self.player.center_x, self.player.center_y, PLAYER_RADIUS+2, PLAYER_OUT, 2)
+
+    def _draw_enemy_outlines(self):
+        for e in self.enemy_list:
+            arcade.draw_circle_outline(e.center_x, e.center_y, e.width/2+2, ENEMY_OUT, 2)
+        for b in self.boss_list:
+            arcade.draw_circle_outline(b.center_x, b.center_y, b.width/2+3, BOSS_OUT, 3)
+
+    def on_draw(self):
+        self.clear()
+        self._draw_background()
         self._draw_telegraphs()
 
         # Sprites
         self.player_list.draw()
+        self._draw_player_outline()
+        self.enemy_list.draw()
+        self._draw_enemy_outlines()
         self.boss_list.draw()
-        self.minions.draw()
-        self.player_bullets.draw()
+        self.bullets.draw()
         self.enemy_bullets.draw()
-        self.powerups.draw()
+        self.xp_orbs.draw()
+
+        # Particles (manual: apply alpha decay)
+        for p in list(self.particles):
+            life = getattr(p, "life", 0.0)
+            if life <= 0:
+                p.remove_from_sprite_lists()
+            else:
+                alpha = int(255 * min(1.0, life / 0.5))
+                p.color = (p.color[0], p.color[1], p.color[2], max(40, min(255, alpha)))
+                p.center_x = snap(p.center_x + getattr(p, "change_x", 0.0))
+                p.center_y = snap(p.center_y + getattr(p, "change_y", 0.0))
+                p.life = life - 1/60
+
         self.particles.draw()
 
-        # Crosshair
-        arcade.draw_circle_outline(self.player.aim_x, self.player.aim_y, 10, arcade.color.LIGHT_GRAY, 2)
+        # Crosshair (always visible)
+        arcade.draw_circle_outline(self.player.aim_x, self.player.aim_y, 11, arcade.color.LIGHT_GRAY, 2)
 
-        # UI
-        self._draw_ui()
+        # HUD
+        self._draw_hud()
 
-        # Intro overlay
-        if self.intro_timer > 0:
-            a = int(min(self.intro_timer * 400, 220))
-            arcade.draw_rectangle_filled(SCREEN_WIDTH/2, SCREEN_HEIGHT/2, SCREEN_WIDTH, SCREEN_HEIGHT, (0, 0, 0, a))
-            arcade.draw_text(f"Stage {self.stage} — Face the Guardian", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 8,
-                             arcade.color.WHITE, 24, anchor_x="center")
+        # Intro/pause overlays
+        if self.intro_t > 0:
+            a = int(min(self.intro_t*400, 220))
+            arcade.draw_rectangle_filled(SCREEN_WIDTH/2, SCREEN_HEIGHT/2, SCREEN_WIDTH, SCREEN_HEIGHT, (0,0,0,a))
+            title = f"Wave {self.wave}" if self.wave < TOTAL_WAVES else "Boss"
+            text_shadowed(title, SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 8, arcade.color.WHITE, 30, anchor_x="center")
 
         if self.paused:
-            arcade.draw_rectangle_filled(SCREEN_WIDTH/2, SCREEN_HEIGHT/2, 520, 160, (0, 0, 0, 200))
-            arcade.draw_text("PAUSED", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 26, arcade.color.GOLD, 28, anchor_x="center")
-            arcade.draw_text("ESC: resume   R: restart   M: menu", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 10,
-                             arcade.color.LIGHT_GRAY, 14, anchor_x="center")
+            arcade.draw_rectangle_filled(SCREEN_WIDTH/2, SCREEN_HEIGHT/2, 560, 180, (0,0,0,200))
+            text_shadowed("PAUSED", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 26, arcade.color.GOLD, 28, anchor_x="center")
+            text_shadowed("ESC: resume   R: restart   M: menu", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 12, arcade.color.LIGHT_GRAY, 14, anchor_x="center")
 
-        if self.game_over:
-            msg = "YOU WIN!" if self.win else "YOU DIED"
-            arcade.draw_rectangle_filled(SCREEN_WIDTH/2, SCREEN_HEIGHT/2, 580, 160, (0, 0, 0, 210))
-            arcade.draw_text(msg, SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 18, arcade.color.GOLD, 30, anchor_x="center")
-            arcade.draw_text("R: replay   M: menu", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 18,
-                             arcade.color.LIGHT_GRAY, 16, anchor_x="center")
-
-    def _draw_ui(self):
-        # Health, score, combo
-        arcade.draw_text(f"HP: {self.player.health}/{PLAYER_MAX_HEALTH}", 10, SCREEN_HEIGHT - 26, UI_COLOR, 16)
-        arcade.draw_text(f"Score: {self.score}", 10, SCREEN_HEIGHT - 48, UI_COLOR, 14)
-        if self.player.combo > 1:
-            arcade.draw_text(f"Combo x{self.player.combo}", 10, SCREEN_HEIGHT - 70, arcade.color.LIGHT_GREEN, 14)
-
-        # Power-up icons
-        x = 180
-        if self.player.shield > 0:
-            arcade.draw_text("Shield", x, SCREEN_HEIGHT - 26, arcade.color.LIGHT_SKY_BLUE, 14); x += 70
-        if self.player.rapid > 0:
-            arcade.draw_text("Rapid", x, SCREEN_HEIGHT - 26, arcade.color.PALE_GOLDENROD, 14); x += 60
-        if self.player.spread > 0:
-            arcade.draw_text("Spread", x, SCREEN_HEIGHT - 26, arcade.color.PLUM, 14); x += 70
-
+    def _draw_hud(self):
+        # HP
+        text_shadowed(f"HP {self.player.hp}/{self.player.hp_max}", 12, SCREEN_HEIGHT-24, UI_COLOR, 18)
+        # XP
+        need = self._xp_needed()
+        text_shadowed(f"LV {self.level}", 12, SCREEN_HEIGHT-48, UI_COLOR, 14)
+        bar_w = 220
+        filled = int(bar_w * (self.xp/need))
+        arcade.draw_lrbt_rectangle_outline(12, 12+bar_w, SCREEN_HEIGHT-62, SCREEN_HEIGHT-48, arcade.color.WHITE, 2)
+        if filled>0:
+            arcade.draw_rectangle_filled(12+filled/2, SCREEN_HEIGHT-55, filled, 12, arcade.color.SPRING_BUD)
+        # Wave & score
+        text_shadowed(f"Wave {self.wave}/{TOTAL_WAVES}", 12, SCREEN_HEIGHT-82, UI_COLOR, 14)
+        text_shadowed(f"Score {self.score}", 12, SCREEN_HEIGHT-102, UI_COLOR, 14)
+        # Dash indicator
+        dash_msg = "Ready" if self.dash_timer.ready() else f"{self.dash_timer.t:.1f}s"
+        text_shadowed(f"Dash: {dash_msg}", 12, SCREEN_HEIGHT-122, arcade.color.LIGHT_GRAY, 12)
         # Boss bar
-        if self.boss and self.boss in self.boss_list:
-            bar_w = 420
-            bar_x = SCREEN_WIDTH - bar_w - 20
-            bar_y = SCREEN_HEIGHT - 40
-            # outline
-            arcade.draw_lrbt_rectangle_outline(bar_x - 2, bar_x + bar_w + 2, bar_y - 12, bar_y + 12,
-                                               arcade.color.WHITE, 1)
-            # fill
-            fill_w = int(bar_w * self.boss.hp_norm())
-            if fill_w > 0:
-                arcade.draw_rectangle_filled(bar_x + fill_w/2, bar_y, fill_w, 20, arcade.color.RED)
-            arcade.draw_text(f"Boss: {self.boss.health}/{self.boss.max_health}",
-                             bar_x + bar_w/2, bar_y - 8, arcade.color.WHITE, 12, anchor_x="center")
+        if len(self.boss_list):
+            b: Boss = self.boss_list[0]
+            bw, bx, by = 460, SCREEN_WIDTH-20-460, SCREEN_HEIGHT-42
+            arcade.draw_lrbt_rectangle_outline(bx-2, bx+bw+2, by-12, by+12, arcade.color.WHITE, 2)
+            fill_w = int(bw * b.hp_norm())
+            if fill_w>0:
+                arcade.draw_rectangle_filled(bx+fill_w/2, by, fill_w, 20, arcade.color.RED)
+            text_shadowed("BOSS", bx + bw/2, by-10, arcade.color.WHITE, 12, anchor_x="center")
 
-    def _draw_telegraphs(self):
-        if not self.boss:
-            return
-        for (x, y, r, tleft, kind) in self.boss.telegraphs:
-            alpha = int(60 + 120 * (tleft / TELEGRAPH_TIME))
-            col = arcade.color.YELLOW_ORANGE if kind == "RING" else arcade.color.LIGHT_SALMON
-            arcade.draw_circle_outline(x, y, r, (*col, alpha), 3)
-
-    # ---------- Update ----------
+    # ---------- update ----------
     def on_update(self, dt: float):
-        if self.paused or self.game_over:
-            return
-        # Intro freeze
-        if self.intro_timer > 0:
-            self.intro_timer -= dt
-            return
+        if self.paused: return
+        if self.intro_t > 0: self.intro_t -= dt; return
 
-        # Timers
-        self.shoot_cd.update(dt)
-        self.melee_cd.update(dt)
-        self.dash_cd.update(dt)
-        self.player.update_invuln(dt)
+        self.fire_timer.cd = self.player.fire_cd
+        self.dash_timer.cd = self.player.dash_cd
+        self.fire_timer.update(dt); self.dash_timer.update(dt)
+        self.player.update_timers(dt)
 
-        # Autoshot if holding
-        if self.shoot_hold and self.shoot_cd.ready():
+        # shooting
+        if self.shoot_hold and self.fire_timer.ready():
             self._player_shoot()
 
-        # Movement
-        dx = (self.right - self.left) * 1.0
-        dy = (self.up - self.down) * 1.0
-        speed = PLAYER_SPEED
-        if dx and dy:
-            speed *= 0.7071
-        if self.player.dashing > 0:
-            speed = PLAYER_DASH_SPEED
-        self.player.center_x += dx * speed
-        self.player.center_y += dy * speed
+        # movement with pixel snap
+        dx = (self.right - self.left); dy = (self.up - self.down)
+        speed = self.player.speed
+        if dx and dy: speed *= 0.7071
+        if self.player.dashing>0: speed = self.player.dash_speed
+        self.player.center_x = snap(self.player.center_x + dx * speed)
+        self.player.center_y = snap(self.player.center_y + dy * speed)
 
-        # Bounds
-        if self.player.left < 10: self.player.left = 10
-        if self.player.right > SCREEN_WIDTH - 10: self.player.right = SCREEN_WIDTH - 10
-        if self.player.bottom < 62: self.player.bottom = 62
-        if self.player.top > SCREEN_HEIGHT - 10: self.player.top = SCREEN_HEIGHT - 10
+        # bounds
+        if self.player.left < ARENA_MARGIN: self.player.left = ARENA_MARGIN
+        if self.player.right > SCREEN_WIDTH-ARENA_MARGIN: self.player.right = SCREEN_WIDTH-ARENA_MARGIN
+        if self.player.bottom < GROUND_Y: self.player.bottom = GROUND_Y
+        if self.player.top > SCREEN_HEIGHT-ARENA_MARGIN: self.player.top = SCREEN_HEIGHT-ARENA_MARGIN
 
-        # Update bullets
-        self.player_bullets.update()
+        # bullets & xp
+        self.bullets.update()
         self.enemy_bullets.update()
+        self.xp_orbs.update()
 
-        # Minions logic
-        for m in list(self.minions):
-            m.update_logic(self.player, dt)
-            if m.center_x < -40 or m.center_x > SCREEN_WIDTH+40 or m.center_y < -40 or m.center_y > SCREEN_HEIGHT+40:
-                m.remove_from_sprite_lists()
+        # xp magnet
+        for orb in self.xp_orbs:
+            d = arcade.get_distance(self.player.center_x, self.player.center_y, orb.center_x, orb.center_y)
+            if d < self.player.magnet_radius:
+                vx, vy = (self.player.center_x - orb.center_x) / (d or 1), (self.player.center_y - orb.center_y) / (d or 1)
+                orb.center_x = snap(orb.center_x + vx * 4.2)
+                orb.center_y = snap(orb.center_y + vy * 4.2)
 
-        # Power-ups
-        self.powerups.update()
-        self.powerup_spawn_t -= dt
-        if self.powerup_spawn_t <= 0:
-            self._spawn_random_powerup()
-            self.powerup_spawn_t = random.uniform(*POWERUP_DROP_PERIOD)
+        # enemies
+        for e in list(self.enemy_list):
+            e.update_status(dt, lambda dmg, _e=e: setattr(_e, "hp", _e.hp - dmg))
+            if isinstance(e, (Chaser, Shooter, Bomber)):
+                e.step(self.player, dt)
+            if e.hp <= 0:
+                self._enemy_die(e)
 
-        # Boss AI & telegraphs
-        if self.boss and self.boss in self.boss_list:
-            self._boss_ai(dt)
-            self._update_telegraphs(dt)
+        # bombers: telegraph -> detonate
+        for e in self.enemy_list:
+            if isinstance(e, Bomber):
+                if random.random() < (0.005 if e.slow_t<=0 else 0.003):
+                    e.telegraphs.append((e.center_x, e.center_y-4, 36, 0.9, "RING"))
+                nt=[]
+                for (x,y,r,t,k) in e.telegraphs:
+                    t -= dt
+                    if t<=0:
+                        self._spawn_ring_bullets(x,y,r, count=16, speed=6.2)
+                    else: nt.append((x,y,r,t,k))
+                e.telegraphs = nt
 
-        # Collisions
+        # boss AI
+        if len(self.boss_list):
+            self._boss_logic(dt)
+
+        # collisions
         self._handle_collisions()
 
-        # Clean bullets off-screen
-        for b in list(self.player_bullets) + list(self.enemy_bullets):
-            if b.right < 0 or b.left > SCREEN_WIDTH or b.top < 0 or b.bottom > SCREEN_HEIGHT:
+        # clean bullets
+        for b in list(self.bullets)+list(self.enemy_bullets):
+            if b.right<ARENA_MARGIN or b.left>SCREEN_WIDTH-ARENA_MARGIN or b.top>SCREEN_HEIGHT-ARENA_MARGIN or b.bottom<GROUND_Y:
                 b.remove_from_sprite_lists()
 
-    # ---------- Input ----------
+        # wave progression
+        if self.wave < TOTAL_WAVES and not len(self.enemy_list) and not self.wave_clear_bonus_pending:
+            self.wave_clear_bonus_pending = True
+            for _ in range(XP_PER_WAVE_CLEAR):
+                self.xp_orbs.append(XPOrb(self.player.center_x+random.uniform(-20,20), self.player.center_y+random.uniform(-10,10)))
+            arcade.schedule(self._start_next_wave, 1.2)
+        if self.wave == TOTAL_WAVES and not len(self.boss_list):
+            self._win()
+
+    # ---------- boss ----------
+    def _boss_logic(self, dt):
+        b: Boss = self.boss_list[0]
+        b.phase_timer += dt
+        if b.phase==1 and b.hp < b.max_hp*0.5:
+            b.phase=2; b.phase_timer = 0.0
+        b.center_x = snap(b.center_x + math.sin(b.phase_timer*0.9) * (1.6 if b.phase==2 else 1.2))
+        if b.phase==1:
+            if b.phase_timer>1.0:
+                b.phase_timer=0.0
+                self._boss_fire_aimed(b, speed=7.4, color=arcade.color.PURPLE)
+                if random.random()<0.35:
+                    b.telegraphs.append((b.center_x, b.center_y-6, 40, 0.9, "RING"))
+        else:
+            if int(b.phase_timer*10)%16==0 and b.phase_timer%0.1<dt:
+                self._boss_fire_fan(b, count=9, spread_deg=54, speed=7.8)
+            if b.phase_timer>3.0:
+                b.phase_timer=0.0
+                self._boss_dash_to_player(b)
+                self._boss_fire_fan(b, count=11, spread_deg=60, speed=8.2)
+            if random.random()<0.018 and len(self.enemy_list)<10:
+                self.enemy_list.append(Chaser(random.randint(ARENA_MARGIN, SCREEN_WIDTH-ARENA_MARGIN), SCREEN_HEIGHT-120))
+            if random.random()<0.012 and len(self.enemy_list)<12:
+                self.enemy_list.append(Shooter(random.randint(ARENA_MARGIN, SCREEN_WIDTH-ARENA_MARGIN), SCREEN_HEIGHT-150))
+            if random.random()<0.018:
+                b.telegraphs.append((b.center_x, b.center_y-8, random.choice((42,52)), 0.9, "RING_BIG"))
+        nt=[]
+        for (x,y,r,t,k) in b.telegraphs:
+            t -= dt
+            if t<=0:
+                self._spawn_ring_bullets(x,y,r, count=24 if k=="RING" else 36, speed=7.0)
+            else:
+                nt.append((x,y,r,t,k))
+        b.telegraphs = nt
+
+    def _boss_fire_aimed(self, boss: Boss, speed=7.0, color=arcade.color.PURPLE):
+        dx,dy = self.player.center_x-boss.center_x, self.player.center_y-boss.center_y
+        d = math.hypot(dx,dy) or 1
+        self.enemy_bullets.append(Bullet(boss.center_x, boss.center_y, dx/d, dy/d, speed, color, "enemy"))
+
+    def _boss_fire_fan(self, boss: Boss, count=7, spread_deg=40, speed=7.0):
+        dx,dy = self.player.center_x-boss.center_x, self.player.center_y-boss.center_y
+        base = math.atan2(dy,dx); spread = math.radians(spread_deg)
+        for i in range(count):
+            ang = base + spread*(i/(count-1)-0.5)
+            self.enemy_bullets.append(Bullet(boss.center_x, boss.center_y, math.cos(ang), math.sin(ang),
+                                             speed, arcade.color.LIGHT_PURPLE, "enemy"))
+
+    def _boss_dash_to_player(self, boss: Boss):
+        tx = self.player.center_x + random.uniform(-60,60)
+        ty = min(max(self.player.center_y+60, SCREEN_HEIGHT/2), SCREEN_HEIGHT-ARENA_MARGIN-20)
+        for i in range(16):
+            t = i/16
+            x = boss.center_x*(1-t)+tx*t + random.uniform(-6,6)
+            y = boss.center_y*(1-t)+ty*t + random.uniform(-6,6)
+            p = arcade.SpriteCircle(4, arcade.color.LIGHT_GRAY)
+            p.center_x, p.center_y = x, y
+            p.change_x = random.uniform(-0.6,0.6)
+            p.change_y = random.uniform(-0.6,0.6)
+            p.life = 0.5
+            self.particles.append(p)
+        boss.center_x, boss.center_y = snap(tx), snap(ty)
+
+    def _spawn_ring_bullets(self, x, y, r, count=18, speed=6.6):
+        for i in range(count):
+            a = 2*math.pi*i/count
+            self.enemy_bullets.append(Bullet(x,y,math.cos(a),math.sin(a),speed, BULLET_COLOR_ENEMY, "enemy"))
+
+    # ---------- collisions ----------
+    def _handle_collisions(self):
+        # player bullets vs enemies
+        for e in list(self.enemy_list):
+            hits = arcade.check_for_collision_with_list(e, self.bullets)
+            if hits:
+                for b in hits:
+                    b.remove_from_sprite_lists()
+                    dmg = self.player.damage * (2 if random.random()<self.player.crit_chance else 1)
+                    e.hp -= dmg
+                    e.apply_status(self.player.burn_on_hit, self.player.slow_on_hit)
+                self._hit_particles(e.center_x, e.center_y, color=arcade.color.GOLD)
+                if e.hp <= 0:
+                    self._enemy_die(e)
+        # player bullets vs boss
+        if len(self.boss_list):
+            boss = self.boss_list[0]
+            hits = arcade.check_for_collision_with_list(boss, self.bullets)
+            for proj in hits:
+                proj.remove_from_sprite_lists()
+                dmg = self.player.damage * (2 if random.random()<self.player.crit_chance else 1)
+                boss.hp -= dmg
+                self._hit_particles(boss.center_x, boss.center_y, color=arcade.color.GOLD)
+                self.player.combo = min(5, self.player.combo+1)
+                self.player.combo_t = 3.0
+                self.score += 8 * self.player.combo
+            if boss.hp <= 0:
+                self._boss_die(boss)
+        # enemy bullets vs player
+        pb = arcade.check_for_collision_with_list(self.player, self.enemy_bullets)
+        for proj in pb:
+            proj.remove_from_sprite_lists()
+            if self.player.take_hit(1) and self.player.hp <= 0:
+                self._lose(); return
+        # enemy touch
+        for e in list(self.enemy_list):
+            if arcade.check_for_collision(self.player, e):
+                if self.player.take_hit(1) and self.player.hp <= 0:
+                    self._lose(); return
+                ang = math.atan2(self.player.center_y - e.center_y, self.player.center_x - e.center_x)
+                self.player.center_x = snap(self.player.center_x + math.cos(ang)*16)
+                self.player.center_y = snap(self.player.center_y + math.sin(ang)*16)
+        # boss touch
+        for b in self.boss_list:
+            if arcade.check_for_collision(self.player, b):
+                if self.player.take_hit(1) and self.player.hp<=0:
+                    self._lose(); return
+        # xp pickup
+        for o in arcade.check_for_collision_with_list(self.player, self.xp_orbs):
+            o.remove_from_sprite_lists()
+            self._gain_xp(XP_ORB_VALUE)
+
+    def _enemy_die(self, e: Enemy):
+        self._hit_particles(e.center_x, e.center_y, count=10, color=arcade.color.BANGLADESH_GREEN)
+        e.remove_from_sprite_lists()
+        self.score += 12 * self.player.combo
+        if random.random()<0.9:
+            self.xp_orbs.append(XPOrb(e.center_x, e.center_y))
+
+    def _boss_die(self, boss: Boss):
+        for _ in range(28):
+            self._hit_particles(boss.center_x+random.uniform(-12,12), boss.center_y+random.uniform(-12,12),
+                                count=1, color=arcade.color.ORANGE, vel=4.0)
+        boss.remove_from_sprite_lists()
+        self.score += 400
+        self._win()
+
+    # ---------- XP / level ----------
+    def _xp_needed(self): return XP_TO_LEVEL_BASE + (self.level-1)*2
+    def _gain_xp(self, amount):
+        self.xp += amount
+        need = self._xp_needed()
+        if self.xp >= need:
+            self.xp -= need
+            self.level += 1
+            self._offer_perk()
+
+    def _offer_perk(self):
+        choices = random.sample(perk_pool(), 3)
+        self.window.show_view(PerkDraftView(self, choices))
+
+    # ---------- shooting ----------
+    def _player_shoot(self):
+        self.fire_timer.trigger()
+        vx, vy = self.player.facing()
+        if self.player.has_spread:
+            spread = SHOTGUN_SPREAD
+            for i in range(SHOTGUN_PELLETS):
+                t = i/(SHOTGUN_PELLETS-1) - 0.5
+                a = math.atan2(vy,vx) + spread*t
+                self.bullets.append(Bullet(self.player.center_x, self.player.center_y,
+                                            math.cos(a), math.sin(a),
+                                            self.player.bullet_speed, BULLET_COLOR_PLAYER, "player"))
+        else:
+            self.bullets.append(Bullet(self.player.center_x, self.player.center_y, vx, vy,
+                                       self.player.bullet_speed, BULLET_COLOR_PLAYER, "player"))
+
+    # ---------- visuals ----------
+    def _hit_particles(self, x, y, count=8, color=arcade.color.GOLD, vel=2.2):
+        for _ in range(count):
+            p = arcade.SpriteCircle(3, color)
+            p.center_x = x + random.uniform(-6,6)
+            p.center_y = y + random.uniform(-6,6)
+            p.change_x = random.uniform(-vel,vel)
+            p.change_y = random.uniform(-vel,vel)
+            p.life = 0.45
+            self.particles.append(p)
+
+    # ---------- wave flow ----------
+    def _start_next_wave(self, dt):
+        arcade.unschedule(self._start_next_wave)
+        if self.wave < TOTAL_WAVES-1:
+            self.wave += 1
+            self.wave_clear_bonus_pending = False
+            self.intro_t = 0.9
+            self._spawn_wave(self.wave)
+        elif self.wave == TOTAL_WAVES-1:
+            self.wave = TOTAL_WAVES
+            self.wave_clear_bonus_pending = False
+            self.intro_t = 0.9
+            self._spawn_wave(self.wave)
+
+    def _win(self):
+        self.end_time = time.time()
+        self.window.show_view(GameOverView(self.score, True, self.end_time-self.start_time))
+    def _lose(self):
+        self.end_time = time.time()
+        self.window.show_view(GameOverView(self.score, False, self.end_time-self.start_time))
+
+    # ---------- input ----------
     def on_key_press(self, key, modifiers):
         if key in (arcade.key.W, arcade.key.UP): self.up = 1
         elif key in (arcade.key.S, arcade.key.DOWN): self.down = 1
         elif key in (arcade.key.A, arcade.key.LEFT): self.left = 1
         elif key in (arcade.key.D, arcade.key.RIGHT): self.right = 1
-
         elif key == arcade.key.SPACE:
             self.shoot_hold = True
-            if self.shoot_cd.ready(): self._player_shoot()
-
-        elif key == arcade.key.Z:
-            # melee
-            if self.melee_cd.ready():
-                self.melee_cd.trigger()
-                self._melee_attack()
-
+            if self.fire_timer.ready(): self._player_shoot()
         elif key == arcade.key.LSHIFT:
-            # dash
-            if self.dash_cd.ready():
-                self.dash_cd.trigger()
-                self.player.dashing = PLAYER_DASH_TIME
-                self.player.iframes = max(self.player.iframes, PLAYER_IFRAME_TIME)
-                # dash impulse toward aim
-                vx, vy = self.player.facing_vec()
-                self.player.center_x += vx * 16
-                self.player.center_y += vy * 16
-
+            if self.dash_timer.ready():
+                self.dash_timer.trigger()
+                self.player.dashing = self.player.dash_time
+                self.player.iframes = max(self.player.iframes, self.player.dash_iframe)
+                vx,vy = self.player.facing()
+                self.player.center_x = snap(self.player.center_x + vx*20)
+                self.player.center_y = snap(self.player.center_y + vy*20)
         elif key == arcade.key.ESCAPE:
-            if not self.game_over:
-                self.paused = not self.paused
-            else:
-                menu = MenuView(); self.window.show_view(menu)
-
+            self.paused = not self.paused
         elif key == arcade.key.R:
-            self.setup()
-
+            if self.paused:
+                self.setup()
         elif key == arcade.key.M:
-            menu = MenuView(); self.window.show_view(menu)
+            self.window.show_view(MenuView())
 
     def on_key_release(self, key, modifiers):
         if key in (arcade.key.W, arcade.key.UP): self.up = 0
         elif key in (arcade.key.S, arcade.key.DOWN): self.down = 0
         elif key in (arcade.key.A, arcade.key.LEFT): self.left = 0
         elif key in (arcade.key.D, arcade.key.RIGHT): self.right = 0
-        elif key == arcade.key.SPACE:
-            self.shoot_hold = False
+        elif key == arcade.key.SPACE: self.shoot_hold = False
 
     def on_mouse_motion(self, x, y, dx, dy):
-        self.player.aim_x = x
-        self.player.aim_y = y
-
+        self.player.aim_x, self.player.aim_y = snap(x), snap(y)
     def on_mouse_press(self, x, y, button, modifiers):
         if button == arcade.MOUSE_BUTTON_LEFT:
             self.shoot_hold = True
-            if self.shoot_cd.ready():
-                self._player_shoot()
-
+            if self.fire_timer.ready(): self._player_shoot()
     def on_mouse_release(self, x, y, button, modifiers):
         if button == arcade.MOUSE_BUTTON_LEFT:
             self.shoot_hold = False
 
-    # ---------- Player combat ----------
-    def _player_shoot(self):
-        base_cd = 0.18 if self.player.rapid > 0 else BULLET_COOLDOWN
-        self.shoot_cd.cooldown = base_cd
-        self.shoot_cd.trigger()
-
-        vx, vy = self.player.facing_vec()
-        shots = []
-
-        if self.player.spread > 0:
-            for a in (-SPREAD_ANGLE, 0.0, SPREAD_ANGLE):
-                ca, sa = math.cos(a), math.sin(a)
-                dx = vx * ca - vy * sa
-                dy = vx * sa + vy * ca
-                shots.append((dx, dy))
-        else:
-            shots.append((vx, vy))
-
-        for dx, dy in shots:
-            b = Bullet(self.player.center_x, self.player.center_y, dx, dy, BULLET_SPEED,
-                       arcade.color.YELLOW, owner="player", radius=3)
-            self.player_bullets.append(b)
-
-    def _melee_attack(self):
-        # Punch particles
-        for _ in range(10):
-            p = arcade.SpriteCircle(3, arcade.color.GOLD)
-            p.center_x = self.player.center_x + random.uniform(-8, 8)
-            p.center_y = self.player.center_y + random.uniform(-8, 8)
-            p.change_x = random.uniform(-2, 2)
-            p.change_y = random.uniform(-2, 2)
-            p.life = 0.35 + random.random() * 0.25
-            self.particles.append(p)
-
-        # Damage boss if close
-        if self.boss and self.boss in self.boss_list:
-            d = arcade.get_distance(self.player.center_x, self.player.center_y, self.boss.center_x, self.boss.center_y)
-            if d <= PLAYER_MELEE_RANGE + self.boss.width/2:
-                self._damage_boss(PLAYER_MELEE_DAMAGE)
-
-        # Damage minions in range
-        for m in list(self.minions):
-            d = arcade.get_distance(self.player.center_x, self.player.center_y, m.center_x, m.center_y)
-            if d <= PLAYER_MELEE_RANGE + m.width/2:
-                m.health -= PLAYER_MELEE_DAMAGE
-                if m.health <= 0:
-                    self._minion_die(m)
-
-    # ---------- Boss / enemy logic ----------
-    def _boss_ai(self, dt: float):
-        b = self.boss
-        b.phase_timer += dt
-
-        if b.stage == 1:
-            # Simple L/R sway + aimed shot + telegraphed ring blast
-            b.center_x += math.sin(b.phase_timer * 0.9) * 1.2
-            if b.phase_timer > 1.0:
-                b.phase_timer = 0.0
-                self._boss_fire_aimed(b, speed=7.0, color=arcade.color.PURPLE)
-                # 1-in-3 chance to telegraph a ring
-                if random.random() < 0.33:
-                    b.telegraphs.append((b.center_x, b.center_y - 10, 28, TELEGRAPH_TIME, "RING"))
-        else:
-            # Stage 2: fan bursts + dashes + minion spawns + telegraphs
-            # Fan every ~1.6s
-            if int(b.phase_timer * 10) % 16 == 0 and b.phase_timer % 0.1 < dt:
-                self._boss_fire_fan(b, count=7, speed=7.2, spread_deg=42)
-
-            # Dash every 3s with post-dash volley
-            if b.phase_timer > 3.0:
-                b.phase_timer = 0.0
-                self._boss_dash_to_player(b)
-                self._boss_fire_fan(b, count=9, speed=7.5, spread_deg=48)
-
-            # Random telegraphed big ring or line
-            if random.random() < 0.02:
-                kind = random.choice(("RING", "RING", "RING", "RING_BIG"))
-                radius = 28 if kind == "RING" else 48
-                b.telegraphs.append((b.center_x, b.center_y - 10, radius, TELEGRAPH_TIME, kind))
-
-            # Minions occasionally
-            if random.random() < 0.012 and len(self.minions) < 6:
-                mx = random.choice((80, SCREEN_WIDTH-80))
-                my = SCREEN_HEIGHT - random.randint(120, 180)
-                self.minions.append(Minion(mx, my))
-
-    def _update_telegraphs(self, dt: float):
-        b = self.boss
-        nt = []
-        for (x, y, r, tleft, kind) in b.telegraphs:
-            tleft -= dt
-            if tleft <= 0:
-                # fire event
-                if kind in ("RING", "RING_BIG"):
-                    self._spawn_ring_bullets(x, y, r, count=18 if kind == "RING" else 32, speed=6.8)
-                # (room for other kinds)
-            else:
-                nt.append((x, y, r, tleft, kind))
-        b.telegraphs = nt
-
-    def _boss_fire_aimed(self, boss: Boss, speed=7.0, color=arcade.color.PURPLE):
-        dx = self.player.center_x - boss.center_x
-        dy = self.player.center_y - boss.center_y
-        d = math.hypot(dx, dy) or 1.0
-        b = Bullet(boss.center_x, boss.center_y, dx/d, dy/d, speed, color, owner="boss", radius=3)
-        self.enemy_bullets.append(b)
-
-    def _boss_fire_fan(self, boss: Boss, count=7, speed=7.0, spread_deg=40):
-        # fan centered at player
-        dx = self.player.center_x - boss.center_x
-        dy = self.player.center_y - boss.center_y
-        angle = math.atan2(dy, dx)
-        spread = math.radians(spread_deg)
-        for i in range(count):
-            a = angle + spread * (i / (count - 1) - 0.5)
-            bdx, bdy = math.cos(a), math.sin(a)
-            b = Bullet(boss.center_x, boss.center_y, bdx, bdy, speed, arcade.color.LIGHT_PURPLE, owner="boss", radius=3)
-            self.enemy_bullets.append(b)
-
-    def _boss_dash_to_player(self, boss: Boss):
-        tx = self.player.center_x + random.uniform(-50, 50)
-        ty = min(max(self.player.center_y + 50, SCREEN_HEIGHT//2), SCREEN_HEIGHT - 60)
-        # trail particles
-        for i in range(14):
-            t = i / 14
-            x = boss.center_x * (1 - t) + tx * t + random.uniform(-6, 6)
-            y = boss.center_y * (1 - t) + ty * t + random.uniform(-6, 6)
-            p = arcade.SpriteCircle(4, arcade.color.LIGHT_GRAY)
-            p.center_x, p.center_y = x, y
-            p.change_x = random.uniform(-0.6, 0.6)
-            p.change_y = random.uniform(-0.6, 0.6)
-            p.life = 0.45
-            self.particles.append(p)
-        boss.center_x, boss.center_y = tx, ty
-
-    def _spawn_ring_bullets(self, x, y, r, count=18, speed=6.8):
-        for i in range(count):
-            a = 2*math.pi * i / count
-            dx, dy = math.cos(a), math.sin(a)
-            b = Bullet(x, y, dx, dy, speed, arcade.color.SALMON, owner="boss", radius=3)
-            self.enemy_bullets.append(b)
-
-    # ---------- Collisions / results ----------
-    def _handle_collisions(self):
-        # Player bullets vs boss
-        if self.boss and self.boss in self.boss_list:
-            hits = arcade.check_for_collision_with_list(self.boss, self.player_bullets)
-            for b in hits:
-                b.remove_from_sprite_lists()
-                self._damage_boss(3)
-
-            if self.boss.health <= 0:
-                self._boss_die()
-
-        # Player bullets vs minions
-        for m in list(self.minions):
-            hits = arcade.check_for_collision_with_list(m, self.player_bullets)
-            for b in hits:
-                b.remove_from_sprite_lists()
-                m.health -= 2
-            if m.health <= 0:
-                self._minion_die(m)
-
-        # Enemy bullets vs player
-        hits = arcade.check_for_collision_with_list(self.player, self.enemy_bullets)
-        for b in hits:
-            b.remove_from_sprite_lists()
-            took = self.player.take_hit(1)
-            if took and self.player.health <= 0:
-                self._end_game(False)
-                return
-
-        # Minion touch damage
-        for m in list(self.minions):
-            if arcade.check_for_collision(self.player, m):
-                if self.player.take_hit(1):
-                    # small knockback
-                    ang = math.atan2(self.player.center_y - m.center_y, self.player.center_x - m.center_x)
-                    self.player.center_x += math.cos(ang)*18
-                    self.player.center_y += math.sin(ang)*18
-                    if self.player.health <= 0:
-                        self._end_game(False)
-                        return
-
-        # Player vs power-ups
-        for p in arcade.check_for_collision_with_list(self.player, self.powerups):
-            kind = p.kind
-            p.remove_from_sprite_lists()
-            if kind == "HEAL":
-                self.player.health = min(PLAYER_MAX_HEALTH, self.player.health + HEAL_AMOUNT)
-            elif kind == "SHIELD":
-                self.player.shield = POWERUP_DURATION
-            elif kind == "RAPID":
-                self.player.rapid = POWERUP_DURATION
-            elif kind == "SPREAD":
-                self.player.spread = POWERUP_DURATION
-
-    def _damage_boss(self, dmg: int):
-        self.boss.health -= dmg
-        # particles
-        for _ in range(8):
-            p = arcade.SpriteCircle(3, arcade.color.GOLD)
-            p.center_x = self.boss.center_x + random.uniform(-8, 8)
-            p.center_y = self.boss.center_y + random.uniform(-8, 8)
-            p.change_x = random.uniform(-2, 2)
-            p.change_y = random.uniform(-2, 2)
-            p.life = 0.4
-            self.particles.append(p)
-        # combo
-        self.player.combo = min(COMBO_MAX, self.player.combo + 1)
-        self.player.combo_timer = COMBO_WINDOW
-        self.score += 10 * self.player.combo
-        # chance to drop a power-up shard on big hits
-        if random.random() < 0.12:
-            self._drop_powerup_near(self.boss.center_x, self.boss.center_y)
-
-    def _boss_die(self):
-        # explosion
-        for _ in range(26):
-            p = arcade.SpriteCircle(4, arcade.color.ORANGE)
-            p.center_x = self.boss.center_x + random.uniform(-12, 12)
-            p.center_y = self.boss.center_y + random.uniform(-12, 12)
-            p.change_x = random.uniform(-4, 4)
-            p.change_y = random.uniform(-4, 4)
-            p.life = 0.7
-            self.particles.append(p)
-
-        self.boss.remove_from_sprite_lists()
-        self.score += 200
-
-        if self.stage < BOSS_COUNT:
-            # stage transition
-            next_story = StoryView(stage=self.stage + 1)
-            self.window.show_view(next_story)
-        else:
-            self._end_game(True)
-
-    def _minion_die(self, m: Minion):
-        for _ in range(8):
-            p = arcade.SpriteCircle(3, arcade.color.BANGLADESH_GREEN)
-            p.center_x = m.center_x + random.uniform(-6, 6)
-            p.center_y = m.center_y + random.uniform(-6, 6)
-            p.change_x = random.uniform(-2, 2)
-            p.change_y = random.uniform(-2, 2)
-            p.life = 0.35
-            self.particles.append(p)
-        m.remove_from_sprite_lists()
-        self.score += 25 * self.player.combo
-        # small chance to drop powerup
-        if random.random() < 0.18:
-            self._drop_powerup_near(m.center_x, m.center_y)
-
-    # ---------- Power-ups ----------
-    def _spawn_random_powerup(self):
-        kind = random.choice(POWERUP_TYPES)
-        x = random.randint(80, SCREEN_WIDTH - 80)
-        y = random.randint(int(SCREEN_HEIGHT*0.55), int(SCREEN_HEIGHT*0.8))
-        self.powerups.append(PowerUp(kind, x, y))
-
-    def _drop_powerup_near(self, x, y):
-        kind = random.choice(POWERUP_TYPES)
-        dx, dy = random.uniform(-30, 30), random.uniform(-30, 30)
-        self.powerups.append(PowerUp(kind, x + dx, y + dy))
-
-    # ---------- End game ----------
-    def _end_game(self, win: bool):
-        self.game_over = True
-        self.win = win
-        self.window.show_view(GameOverView(self.score, win))
-
-
-# ------------------ Game Over ------------------
-class GameOverView(arcade.View):
-    def __init__(self, final_score: int, win: bool):
-        super().__init__()
-        self.final_score = final_score
-        self.win = win
-
-    def on_show(self):
-        arcade.set_background_color(BG_COLOR)
-
-    def on_draw(self):
-        self.clear()
-        title = "VICTORY!" if self.win else "DEFEAT"
-        color = arcade.color.LIGHT_GREEN if self.win else arcade.color.SALMON
-        arcade.draw_text(title, SCREEN_WIDTH/2, SCREEN_HEIGHT*0.64, color, 40, anchor_x="center")
-        arcade.draw_text(f"Final Score: {self.final_score}", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.52,
-                         arcade.color.WHITE, 18, anchor_x="center")
-        arcade.draw_text("Press R to Replay", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.38,
-                         arcade.color.LIGHT_GRAY, 16, anchor_x="center")
-        arcade.draw_text("Press M for Menu   ESC to Quit", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.32,
-                         arcade.color.LIGHT_GRAY, 14, anchor_x="center")
-
-    def on_key_press(self, key, modifiers):
-        if key == arcade.key.R:
-            game = GameView(stage=1); game.setup(); self.window.show_view(game)
-        elif key == arcade.key.M:
-            self.window.show_view(MenuView())
-        elif key == arcade.key.ESCAPE:
-            arcade.close_window()
-
-
-# ------------------ Main ------------------
+# ---------------- Main ----------------
 def main():
     window = arcade.Window(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE)
     window.show_view(MenuView())
