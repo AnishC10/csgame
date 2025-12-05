@@ -1,9 +1,7 @@
-C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\arcade\exceptions.py:138: PerformanceWarning: draw_text is an extremely slow function for displaying text. Consider using Text objects instead.
-  warnings.warn(message, warning_type)
-Traceback (most recent call last):
-  File "C:\Users\anish\PycharmProjects\csgame\main.py", line 870, in <module>
+raceback (most recent call last):
+  File "C:\Users\anish\PycharmProjects\csgame\main.py", line 939, in <module>
     main()
-  File "C:\Users\anish\PycharmProjects\csgame\main.py", line 867, in main
+  File "C:\Users\anish\PycharmProjects\csgame\main.py", line 936, in main
     arcade.run()
   File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\arcade\window_commands.py", line 152, in run
     pyglet.app.run(None)
@@ -16,21 +14,16 @@ Traceback (most recent call last):
     self.clock.call_scheduled_functions(dt)
   File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\pyglet\clock.py", line 217, in call_scheduled_functions
     item.func(now - item.last_ts, *item.args, **item.kwargs)
-  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\arcade\application.py", line 545, in _dispatch_frame
-    self._dispatch_updates(delta_time)
-  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\arcade\application.py", line 579, in _dispatch_updates
-    self.dispatch_event("on_update", GLOBAL_CLOCK.delta_time)
+  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\arcade\application.py", line 556, in _dispatch_frame
+    self.draw(self._accumulated_draw_time)
+  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\pyglet\window\__init__.py", line 711, in draw
+    self.dispatch_event('on_draw')
   File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\pyglet\window\__init__.py", line 685, in dispatch_event
     super().dispatch_event(*args)
-  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\pyglet\event.py", line 367, in dispatch_event
-    self._raise_dispatch_exception(event_type, args, handler, exception)
-  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\pyglet\event.py", line 448, in _raise_dispatch_exception
-    raise exception
   File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\pyglet\event.py", line 364, in dispatch_event
     if handler(*args):
        ^^^^^^^^^^^^^^
-  File "C:\Users\anish\PycharmProjects\csgame\main.py", line 572, in on_update
-    self.xp_orbs.update()
-  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\arcade\sprite_list\sprite_list.py", line 852, in update
-    sprite.update(delta_time, *args, **kwargs)
-TypeError: XPOrb.update() takes 1 positional argument but 2 were given
+  File "C:\Users\anish\PycharmProjects\csgame\main.py", line 304, in on_draw
+    draw_text_shadowed(self.title, SCREEN_WIDTH/2, SCREEN_HEIGHT*0.68)
+                       ^^^^^^^^^^
+AttributeError: 'MenuView' object has no attribute 'title'
