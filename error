@@ -1,0 +1,30 @@
+  warnings.warn(message, warning_type)
+Traceback (most recent call last):
+  File "C:\Users\anish\PycharmProjects\csgame\main.py", line 727, in <module>
+    main()
+  File "C:\Users\anish\PycharmProjects\csgame\main.py", line 724, in main
+    arcade.run()
+  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\arcade\window_commands.py", line 152, in run
+    pyglet.app.run(None)
+  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\pyglet\app\__init__.py", line 79, in run
+    event_loop.run(interval)
+  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\pyglet\app\base.py", line 164, in run
+    timeout = self.idle()
+              ^^^^^^^^^^^
+  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\pyglet\app\base.py", line 232, in idle
+    self.clock.call_scheduled_functions(dt)
+  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\pyglet\clock.py", line 217, in call_scheduled_functions
+    item.func(now - item.last_ts, *item.args, **item.kwargs)
+  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\arcade\application.py", line 556, in _dispatch_frame
+    self.draw(self._accumulated_draw_time)
+  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\pyglet\window\__init__.py", line 711, in draw
+    self.dispatch_event('on_draw')
+  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\pyglet\window\__init__.py", line 685, in dispatch_event
+    super().dispatch_event(*args)
+  File "C:\Users\anish\PycharmProjects\csgame\venv\Lib\site-packages\pyglet\event.py", line 364, in dispatch_event
+    if handler(*args):
+       ^^^^^^^^^^^^^^
+  File "C:\Users\anish\PycharmProjects\csgame\main.py", line 295, in on_draw
+    arcade.draw_rectangle_outline(bar_x + bar_width / 2, bar_y, bar_width + 4, 22, arcade.color.WHITE)
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'arcade' has no attribute 'draw_rectangle_outline'. Did you mean: 'draw_triangle_outline'?
