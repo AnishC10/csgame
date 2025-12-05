@@ -12,8 +12,6 @@ Structure:
   - StoryView: short dialog / transition before each boss
   - GameView: main gameplay; two boss stages with different AI
   - GameOverView: win/lose + replay/menu
-
-Designed to be easy to read and modify for presentation.
 """
 
 import arcade
@@ -116,7 +114,6 @@ class StoryView(arcade.View):
         super().__init__()
         self.stage = stage
         self.index = 0
-        self.advance_cooldown = 0.1
 
     def on_show(self):
         arcade.set_background_color(BG_COLOR)
@@ -147,32 +144,23 @@ class StoryView(arcade.View):
                 self.window.show_view(game)
 
 
-class Player(arcade.Sprite):
+class Player(arcade.SpriteCircle):
     """Player sprite using a simple circle texture."""
-
     def __init__(self):
-        # Use a small texture circle via SpriteCircle helper
-        super().__init__()
-        self.texture = arcade.make_circle_texture(PLAYER_SIZE * 2, arcade.color.CYAN)
-        self.width = PLAYER_SIZE * 2
-        self.height = PLAYER_SIZE * 2
+        super().__init__(PLAYER_SIZE, arcade.color.CYAN)
         self.center_x = SCREEN_WIDTH // 2
         self.center_y = SCREEN_HEIGHT // 2
         self.health = PLAYER_MAX_HEALTH
         self.facing_angle = 0.0  # radians
 
 
-class Boss(arcade.Sprite):
+class Boss(arcade.SpriteCircle):
     """Boss with health and simple behavior configuration."""
-
     def __init__(self, stage: int):
-        # Visual size scales with stage
         size = 36 + 8 * stage
-        super().__init__()
         color = arcade.color.RED if stage == 1 else arcade.color.ORANGE_RED
-        self.texture = arcade.make_circle_texture(size * 2, color)
-        self.width = size * 2
-        self.height = size * 2
+        super().__init__(size, color)
+        # SpriteCircle radius -> width/height are 2*radius
         self.center_x = SCREEN_WIDTH // 2
         self.center_y = SCREEN_HEIGHT - 120
         self.max_health = 30 + (stage - 1) * 20
@@ -184,12 +172,10 @@ class Boss(arcade.Sprite):
         return max(self.health / self.max_health, 0.0)
 
 
-class Bullet(arcade.Sprite):
+class Bullet(arcade.SpriteCircle):
     """Simple bullet sprite."""
-
     def __init__(self, x, y, dx, dy, color=arcade.color.YELLOW, speed=1.0, owner="player"):
-        super().__init__()
-        self.texture = arcade.make_circle_texture(6, color)
+        super().__init__(3, color)
         self.center_x = x
         self.center_y = y
         self.change_x = dx * speed
@@ -246,7 +232,6 @@ class GameView(arcade.View):
 
         # Spawn boss for this stage
         self.boss = Boss(stage=self.stage)
-        # Boss positions vary slightly
         if self.stage == 1:
             self.boss.center_x = SCREEN_WIDTH // 2
             self.boss.center_y = SCREEN_HEIGHT - 120
@@ -291,11 +276,19 @@ class GameView(arcade.View):
             bar_width = 400
             bar_x = SCREEN_WIDTH - bar_width - 20
             bar_y = SCREEN_HEIGHT - 40
-            # outline
-            arcade.draw_rectangle_outline(bar_x + bar_width / 2, bar_y, bar_width + 4, 22, arcade.color.WHITE)
+            # outline (Arcade 3.x: use lrbt variant for outlines)
+            arcade.draw_lrbt_rectangle_outline(
+                bar_x - 2,                      # left
+                bar_x + bar_width + 2,          # right
+                bar_y - 11,                     # bottom
+                bar_y + 11,                     # top
+                arcade.color.WHITE,
+                1
+            )
             # fill
             fill_w = int(bar_width * self.boss.normalized_health())
-            arcade.draw_rectangle_filled(bar_x + fill_w / 2, bar_y, fill_w, 18, arcade.color.RED)
+            if fill_w > 0:
+                arcade.draw_rectangle_filled(bar_x + fill_w / 2, bar_y, fill_w, 18, arcade.color.RED)
             arcade.draw_text(f"Boss HP: {self.boss.health}/{self.boss.max_health}", bar_x + bar_width / 2, bar_y - 6,
                              arcade.color.WHITE, 12, anchor_x="center")
 
@@ -352,10 +345,18 @@ class GameView(arcade.View):
         if self.player.top > SCREEN_HEIGHT - 10:
             self.player.top = SCREEN_HEIGHT - 10
 
-        # Update bullets and particles
+        # Update bullets
         self.player_bullets.update()
         self.enemy_bullets.update()
-        self.particles.update()
+
+        # Update simple particle lifetimes & motion
+        for p in list(self.particles):
+            if hasattr(p, "life"):
+                p.life -= delta_time
+                p.center_x += getattr(p, "change_x", 0.0)
+                p.center_y += getattr(p, "change_y", 0.0)
+                if p.life <= 0:
+                    p.remove_from_sprite_lists()
 
         # Remove off-screen bullets
         for bullet in list(self.player_bullets) + list(self.enemy_bullets):
@@ -426,8 +427,7 @@ class GameView(arcade.View):
                 self._boss_shoot_aimed(boss)
         else:
             # Stage 2: more aggressive - dash + burst shots
-            # Move towards a position above the player sometimes
-            # Every 1.8s do a burst of fan bullets; every 3s do a dash
+            # Every ~1.8s do a burst of fan bullets; every 3s do a dash
             if int(boss.phase_timer * 10) % 18 == 0 and boss.phase_timer % 0.1 < delta:
                 self._boss_shoot_fan(boss, count=7)
             # occasional dash toward player
@@ -459,7 +459,6 @@ class GameView(arcade.View):
 
     def _boss_dash_toward_player(self, boss: Boss):
         # dash movement: teleport-ish with particle trail
-        # linear interpolation to player position
         tx = self.player.center_x + random.uniform(-40, 40)
         ty = min(max(self.player.center_y + 40, SCREEN_HEIGHT // 2), SCREEN_HEIGHT - 60)
         # create particles along the path
@@ -557,131 +556,8 @@ class GameView(arcade.View):
     def _end_game(self, win: bool):
         self.game_over = True
         self.win = win
-        # Delay a little then show GameOverView for a nicer presentation
         go = GameOverView(final_score=self.score, win=win)
         self.window.show_view(go)
-
-    def update(self, delta_time: float = 1 / 60):
-        """Arcade calls update or on_update depending on setup; we keep it for completeness."""
-        self.on_update(delta_time)
-
-    # Provide compatibility for particle lifetimes by hooking into normal update
-    def on_update(self, delta_time: float):
-        # For backward compatibility, call the main logic method
-        # (We already used on_update above, but ensure both work)
-        # But to avoid duplicating, do nothing here; main update is above in on_update definition.
-        pass
-
-
-# Note: above we defined on_update twice by mistake if using the same name.
-# To keep the code correct we will rebind GameView.on_update to the primary one.
-# (This small fix keeps the single-file structure simple.)
-def _gameview_on_update(self, delta_time: float):
-    # call the game loop function implemented earlier
-    # we purposely placed the main loop function under the other name; now run it
-    # to avoid duplication issues we reimplement the actual logic here:
-    # Update timers
-    self.shoot_timer.update(delta_time)
-    self.melee_timer.update(delta_time)
-    if self.intro_timer > 0:
-        self.intro_timer -= delta_time
-        return  # freeze gameplay briefly for story feel
-
-    if self.game_over:
-        return
-
-    # Update movement
-    dx = dy = 0
-    if self.up:
-        dy += PLAYER_SPEED
-    if self.down:
-        dy -= PLAYER_SPEED
-    if self.left:
-        dx -= PLAYER_SPEED
-    if self.right:
-        dx += PLAYER_SPEED
-    if dx != 0 and dy != 0:
-        dx *= 0.7071
-        dy *= 0.7071
-    self.player.center_x += dx
-    self.player.center_y += dy
-
-    # Keep player onscreen
-    if self.player.left < 10:
-        self.player.left = 10
-    if self.player.right > SCREEN_WIDTH - 10:
-        self.player.right = SCREEN_WIDTH - 10
-    if self.player.bottom < 62:
-        self.player.bottom = 62
-    if self.player.top > SCREEN_HEIGHT - 10:
-        self.player.top = SCREEN_HEIGHT - 10
-
-    # Update bullets & particles
-    self.player_bullets.update()
-    self.enemy_bullets.update()
-    # Particles simple life decay
-    for p in list(self.particles):
-        if hasattr(p, "life"):
-            p.life -= delta_time
-            p.center_x += getattr(p, "change_x", 0)
-            p.center_y += getattr(p, "change_y", 0)
-            if p.life <= 0:
-                p.remove_from_sprite_lists()
-
-    # Remove off-screen bullets
-    for bullet in list(self.player_bullets) + list(self.enemy_bullets):
-        if bullet.right < 0 or bullet.left > SCREEN_WIDTH or bullet.top < 0 or bullet.bottom > SCREEN_HEIGHT:
-            bullet.remove_from_sprite_lists()
-
-    # Boss AI
-    if self.boss and self.boss in self.boss_list:
-        self._boss_ai(self.boss, delta_time)
-
-    # Collisions: player bullets hit boss
-    if self.boss and self.boss in self.boss_list:
-        hits = arcade.check_for_collision_with_list(self.boss, self.player_bullets)
-        for b in hits:
-            b.remove_from_sprite_lists()
-            self.boss.health -= 3
-            self._spawn_hit_particles(self.boss.center_x, self.boss.center_y)
-            self.score += 10
-        if self.boss.health <= 0:
-            self._spawn_explosion(self.boss.center_x, self.boss.center_y)
-            self.boss.remove_from_sprite_lists()
-            self.score += 200
-            if self.stage < BOSS_COUNT:
-                next_stage = StoryView(stage=self.stage + 1)
-                self.window.show_view(next_stage)
-            else:
-                self._end_game(win=True)
-            return
-
-    # Enemy bullets hit player
-    hits = arcade.check_for_collision_with_list(self.player, self.enemy_bullets)
-    for b in hits:
-        b.remove_from_sprite_lists()
-        self.player.health -= 1
-        self._spawn_hit_particles(self.player.center_x, self.player.center_y)
-        if self.player.health <= 0:
-            self._end_game(win=False)
-            return
-
-    # Boss touching player
-    if self.boss and self.boss in self.boss_list:
-        if arcade.check_for_collision(self.player, self.boss):
-            self.player.health -= 1
-            angle = math.atan2(self.player.center_y - self.boss.center_y,
-                               self.player.center_x - self.boss.center_x)
-            self.player.center_x += math.cos(angle) * 24
-            self.player.center_y += math.sin(angle) * 24
-            self._spawn_hit_particles(self.player.center_x, self.player.center_y)
-            if self.player.health <= 0:
-                self._end_game(win=False)
-                return
-
-
-# Bind the correct on_update method
-GameView.on_update = _gameview_on_update
 
 
 class GameOverView(arcade.View):
@@ -725,4 +601,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
