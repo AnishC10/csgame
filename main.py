@@ -1,22 +1,12 @@
 """
-StoryQuest++ — Arena Roguelite (Clarity Pass, Arcade 3.x)
+StoryQuest++ — Clear & Stable (Arcade 3.x, single-file)
 
-Visual clarity & UX upgrades:
-  • High-contrast HUD with text shadows
-  • Subtle gradient + grid background (no assets)
-  • Telegraphs: filled translucent discs + thick outlines
-  • Player/enemy crisp outlines and brighter projectiles
-  • Particle alpha decay (cleaner bursts, less smear)
-  • Pixel snapping on sprite positions to avoid blur
-  • Larger, consistent font sizes; improved spacing
-
-Controls:
-  Move:   WASD / Arrows
-  Shoot:  SPACE or Left Click (hold)
-  Dash:   Left Shift (i-frames)
-  Pause:  ESC
-  Restart (from pause/over): R
-  Menu:   M
+Fixes & upgrades in this version:
+  • FIX: XPOrb.update now accepts delta_time -> no TypeError crash
+  • Enemies take damage and die (clean collision + damage pipeline)
+  • Floating health bars for ALL enemies + the Player (above heads)
+  • HUD text uses cached arcade.Text objects (no PerformanceWarning)
+  • Same clean visuals (gradient/grid, telegraphs), outlines, particles
 """
 
 import arcade
@@ -28,7 +18,7 @@ from typing import Optional, List, Tuple
 # ---------------- Window / arena ----------------
 SCREEN_WIDTH  = 1000
 SCREEN_HEIGHT = 640
-SCREEN_TITLE  = "StoryQuest++ — Arena Roguelite (Clarity)"
+SCREEN_TITLE  = "StoryQuest++ — Clear & Stable"
 
 ARENA_MARGIN = 48
 GROUND_Y     = 56
@@ -82,6 +72,11 @@ ENEMY_OUT   = arcade.color.WHITE
 BOSS_BODY   = arcade.color.ORANGE_RED
 BOSS_OUT    = arcade.color.WHITE
 
+HP_BAR_BACK = (0, 0, 0, 160)
+HP_BAR_GREEN= arcade.color.SPRING_BUD
+HP_BAR_RED  = arcade.color.PASTEL_RED
+HP_BAR_YELLOW = arcade.color.GOLD
+
 # ---------------- Helpers ----------------
 def clamp(v, a, b): 
     return a if v < a else b if v > b else v
@@ -89,12 +84,6 @@ def clamp(v, a, b):
 def snap(x: float) -> float:
     """Pixel snap to avoid sub-pixel blur on lines/sprites."""
     return float(int(round(x)))
-
-def text_shadowed(text, x, y, color, size=16, anchor_x="left", anchor_y="baseline"):
-    # shadow
-    arcade.draw_text(text, x+1, y-1, TEXT_SHADOW, size, anchor_x=anchor_x, anchor_y=anchor_y)
-    # main
-    arcade.draw_text(text, x,   y,   color,       size, anchor_x=anchor_x, anchor_y=anchor_y)
 
 class Timer:
     def __init__(self, cd=0.0): self.cd, self.t = cd, 0.0
@@ -249,7 +238,8 @@ class XPOrb(arcade.SpriteCircle):
         self.center_x, self.center_y = x, y
         self.vx = random.uniform(-0.8,0.8)
         self.vy = random.uniform(0.6,1.2)
-    def update(self):
+    def update(self, delta_time: float = 0.0):
+        # Accept delta_time to satisfy SpriteList.update contract
         self.center_x += self.vx
         self.center_y += self.vy
         self.vx *= 0.98
@@ -266,29 +256,66 @@ class Boss(arcade.SpriteCircle):
         self.phase = 1
     def hp_norm(self): return max(0.0, self.hp / self.max_hp)
 
+# ---------------- Utility drawing ----------------
+def draw_text_shadowed(text_obj: arcade.Text, x, y, sdx=1, sdy=-1):
+    """Draw Text with a simple shadow without recreating objects."""
+    # Shadow
+    text_obj.position = (x+sdx, y+sdy)
+    text_obj.color = TEXT_SHADOW
+    text_obj.draw()
+    # Main
+    text_obj.position = (x, y)
+    text_obj.color = text_obj._orig_color if hasattr(text_obj, "_orig_color") else arcade.color.WHITE
+    text_obj.draw()
+
+def draw_health_bar(x, y, width, height, hp, hp_max, edge_color=arcade.color.WHITE):
+    """Generic health bar (filled over translucent back)."""
+    if hp_max <= 0: return
+    ratio = max(0.0, min(1.0, hp / hp_max))
+    # back
+    arcade.draw_rectangle_filled(x, y, width, height, HP_BAR_BACK)
+    # color selection
+    col = HP_BAR_GREEN if ratio > 0.6 else HP_BAR_YELLOW if ratio > 0.3 else HP_BAR_RED
+    # fill
+    if ratio > 0:
+        arcade.draw_rectangle_filled(x - (width*(1-ratio))/2, y, width*ratio, height-2, col)
+    # outline
+    arcade.draw_rectangle_outline(x, y, width, height, edge_color, 1)
+
 # ---------------- Views ----------------
 class MenuView(arcade.View):
     def on_show(self):
         arcade.set_background_color(BG_BOTTOM)
+        # Cache menu texts
+        self.title = arcade.Text("STORYQUEST++", 0, 0, arcade.color.GOLD, 40, anchor_x="center")
+        self.title._orig_color = arcade.color.GOLD
+        self.subtitle = arcade.Text("Clarity & Stability build — cached text, health bars, fixed XP orb update", 0,0, arcade.color.LIGHT_GRAY, 16, anchor_x="center")
+        self.subtitle._orig_color = arcade.color.LIGHT_GRAY
+        self.controls = arcade.Text("WASD move • SPACE/LeftClick shoot • LSHIFT dash • ESC pause", 0,0, arcade.color.WHITE, 12, anchor_x="center")
+        self.controls._orig_color = arcade.color.WHITE
+        self.start = arcade.Text("Press ENTER to Start", 0,0, arcade.color.LIGHT_GREEN, 22, anchor_x="center")
+        self.start._orig_color = arcade.color.LIGHT_GREEN
+        self.quit = arcade.Text("Press ESC to Quit", 0,0, arcade.color.LIGHT_GRAY, 14, anchor_x="center")
+        self.quit._orig_color = arcade.color.LIGHT_GRAY
+
     def on_draw(self):
         self.clear()
         self._draw_background()
-        text_shadowed("STORYQUEST++", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.68, arcade.color.GOLD, 40, anchor_x="center")
-        text_shadowed("Clarity pass: higher contrast HUD • sharper telegraphs • cleaner visuals", 
-                      SCREEN_WIDTH/2, SCREEN_HEIGHT*0.60, arcade.color.LIGHT_GRAY, 16, anchor_x="center")
-        text_shadowed("WASD move • SPACE/LeftClick shoot • LSHIFT dash • ESC pause",
-                      SCREEN_WIDTH/2, SCREEN_HEIGHT*0.54, arcade.color.WHITE, 12, anchor_x="center")
-        text_shadowed("Press ENTER to Start", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.30, arcade.color.LIGHT_GREEN, 22, anchor_x="center")
-        text_shadowed("Press ESC to Quit", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.25, arcade.color.LIGHT_GRAY, 14, anchor_x="center")
+        draw_text_shadowed(self.title, SCREEN_WIDTH/2, SCREEN_HEIGHT*0.68)
+        draw_text_shadowed(self.subtitle, SCREEN_WIDTH/2, SCREEN_HEIGHT*0.60)
+        draw_text_shadowed(self.controls, SCREEN_WIDTH/2, SCREEN_HEIGHT*0.54)
+        draw_text_shadowed(self.start, SCREEN_WIDTH/2, SCREEN_HEIGHT*0.30)
+        draw_text_shadowed(self.quit, SCREEN_WIDTH/2, SCREEN_HEIGHT*0.25)
+
     def _draw_background(self):
-        # Gradient
+        # Gradient + grid
         arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT, BG_BOTTOM)
         arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, SCREEN_HEIGHT*0.55, SCREEN_HEIGHT, BG_TOP)
-        # Grid
         for x in range(ARENA_MARGIN, SCREEN_WIDTH-ARENA_MARGIN+1, GRID_SPACING):
             arcade.draw_line(x, GROUND_Y, x, SCREEN_HEIGHT-ARENA_MARGIN, GRID_COLOR, 1)
         for y in range(GROUND_Y, SCREEN_HEIGHT-ARENA_MARGIN+1, GRID_SPACING):
             arcade.draw_line(ARENA_MARGIN, y, SCREEN_WIDTH-ARENA_MARGIN, y, GRID_COLOR, 1)
+
     def on_key_press(self, key, modifiers):
         if key in (arcade.key.ENTER, arcade.key.RETURN):
             gv = GameView(); gv.setup(); self.window.show_view(gv)
@@ -301,22 +328,31 @@ class PerkDraftView(arcade.View):
         self.game = game
         self.options = options
         self.selected = 0
+
     def on_show(self):
         arcade.set_background_color(BG_BOTTOM)
+        self.title = arcade.Text("Choose a Perk", 0,0, arcade.color.GOLD, 28, anchor_x="center"); self.title._orig_color=arcade.color.GOLD
+        self.hint  = arcade.Text("↑/↓ to select • ENTER to confirm", 0,0, arcade.color.WHITE, 12, anchor_x="center"); self.hint._orig_color=arcade.color.WHITE
+        # Cache option heads/bodies as Text objects each draw (we still set text each frame)
+
     def on_draw(self):
         self.clear()
-        self._draw_background()
-        text_shadowed("Choose a Perk", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.72, arcade.color.GOLD, 28, anchor_x="center")
+        self._bg()
+        draw_text_shadowed(self.title, SCREEN_WIDTH/2, SCREEN_HEIGHT*0.72)
         for i, perk in enumerate(self.options):
             y = SCREEN_HEIGHT*0.52 - i*84
             col = arcade.color.LIGHT_GREEN if i==self.selected else arcade.color.LIGHT_GRAY
             arcade.draw_rectangle_filled(SCREEN_WIDTH/2, y, 680, 64, (0,0,0,140))
-            text_shadowed(perk.name, SCREEN_WIDTH/2 - 320, y+12, col, 18)
-            text_shadowed(perk.desc, SCREEN_WIDTH/2 - 320, y-12, arcade.color.WHITE, 12)
-        text_shadowed("↑/↓ to select • ENTER to confirm", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.20, arcade.color.WHITE, 12, anchor_x="center")
-    def _draw_background(self):
+            name = arcade.Text(perk.name, SCREEN_WIDTH/2 - 320, y+12, col, 18); name._orig_color=col
+            desc = arcade.Text(perk.desc, SCREEN_WIDTH/2 - 320, y-12, arcade.color.WHITE, 12); desc._orig_color=arcade.color.WHITE
+            draw_text_shadowed(name, name.x, name.y)
+            draw_text_shadowed(desc, desc.x, desc.y)
+        draw_text_shadowed(self.hint, SCREEN_WIDTH/2, SCREEN_HEIGHT*0.20)
+
+    def _bg(self):
         arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT, BG_BOTTOM)
         arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, SCREEN_HEIGHT*0.55, SCREEN_HEIGHT, BG_TOP)
+
     def on_key_press(self, key, modifiers):
         if key in (arcade.key.UP, arcade.key.W): self.selected = (self.selected - 1) % len(self.options)
         elif key in (arcade.key.DOWN, arcade.key.S): self.selected = (self.selected + 1) % len(self.options)
@@ -330,15 +366,20 @@ class GameOverView(arcade.View):
         self.score = score; self.win = win; self.seconds = seconds
     def on_show(self):
         arcade.set_background_color(BG_BOTTOM)
+        self.title = arcade.Text("VICTORY!" if self.win else "DEFEAT", 0,0, arcade.color.LIGHT_GREEN if self.win else arcade.color.SALMON, 40, anchor_x="center")
+        self.title._orig_color = self.title.color
+        self.tscore= arcade.Text("", 0,0, arcade.color.WHITE, 18, anchor_x="center"); self.tscore._orig_color=arcade.color.WHITE
+        self.ttime = arcade.Text("", 0,0, arcade.color.WHITE, 16, anchor_x="center"); self.ttime._orig_color=arcade.color.WHITE
+        self.hint  = arcade.Text("R: Replay   M: Menu   ESC: Quit", 0,0, arcade.color.LIGHT_GRAY, 16, anchor_x="center"); self.hint._orig_color=arcade.color.LIGHT_GRAY
     def on_draw(self):
         self.clear()
         arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT, BG_BOTTOM)
-        title = "VICTORY!" if self.win else "DEFEAT"
-        color = arcade.color.LIGHT_GREEN if self.win else arcade.color.SALMON
-        text_shadowed(title, SCREEN_WIDTH/2, SCREEN_HEIGHT*0.64, color, 40, anchor_x="center")
-        text_shadowed(f"Score: {self.score}", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.54, arcade.color.WHITE, 18, anchor_x="center")
-        text_shadowed(f"Time: {int(self.seconds)}s", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.48, arcade.color.WHITE, 16, anchor_x="center")
-        text_shadowed("R: Replay   M: Menu   ESC: Quit", SCREEN_WIDTH/2, SCREEN_HEIGHT*0.34, arcade.color.LIGHT_GRAY, 16, anchor_x="center")
+        draw_text_shadowed(self.title, SCREEN_WIDTH/2, SCREEN_HEIGHT*0.64)
+        self.tscore.text = f"Score: {self.score}"
+        self.ttime.text  = f"Time: {int(self.seconds)}s"
+        draw_text_shadowed(self.tscore, SCREEN_WIDTH/2, SCREEN_HEIGHT*0.54)
+        draw_text_shadowed(self.ttime,  SCREEN_WIDTH/2, SCREEN_HEIGHT*0.48)
+        draw_text_shadowed(self.hint,   SCREEN_WIDTH/2, SCREEN_HEIGHT*0.34)
     def on_key_press(self, key, modifiers):
         if key == arcade.key.R:
             g = GameView(); g.setup(); self.window.show_view(g)
@@ -378,6 +419,14 @@ class GameView(arcade.View):
         self.end_time = 0.0
 
         self.intro_t = 0.9
+
+        # HUD text cache
+        self.hud_hp   = arcade.Text("", 12, SCREEN_HEIGHT-26, UI_COLOR, 18); self.hud_hp._orig_color=UI_COLOR
+        self.hud_lv   = arcade.Text("", 12, SCREEN_HEIGHT-48, UI_COLOR, 14); self.hud_lv._orig_color=UI_COLOR
+        self.hud_wave = arcade.Text("", 12, SCREEN_HEIGHT-82, UI_COLOR, 14); self.hud_wave._orig_color=UI_COLOR
+        self.hud_score= arcade.Text("", 12, SCREEN_HEIGHT-102, UI_COLOR, 14); self.hud_score._orig_color=UI_COLOR
+        self.hud_dash = arcade.Text("", 12, SCREEN_HEIGHT-122, arcade.color.LIGHT_GRAY, 12); self.hud_dash._orig_color=arcade.color.LIGHT_GRAY
+        self.hud_boss = arcade.Text("BOSS", 0,0, arcade.color.WHITE, 12, anchor_x="center"); self.hud_boss._orig_color=arcade.color.WHITE
 
     # ---------- setup ----------
     def setup(self):
@@ -426,43 +475,54 @@ class GameView(arcade.View):
 
     # ---------- drawing ----------
     def _draw_background(self):
-        # Gradient sky
         arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT, BG_BOTTOM)
         arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, SCREEN_HEIGHT*0.55, SCREEN_HEIGHT, BG_TOP)
-        # Ground slab
         arcade.draw_rectangle_filled(SCREEN_WIDTH/2, GROUND_Y, SCREEN_WIDTH-40, 92, arcade.color.DARK_OLIVE_GREEN)
-        # Arena border
         arcade.draw_lrbt_rectangle_outline(ARENA_MARGIN, SCREEN_WIDTH-ARENA_MARGIN, GROUND_Y, SCREEN_HEIGHT-ARENA_MARGIN, arcade.color.WHITE, 2)
-        # Grid lines inside arena (subtle)
         for x in range(ARENA_MARGIN, SCREEN_WIDTH-ARENA_MARGIN+1, GRID_SPACING):
             arcade.draw_line(x, GROUND_Y, x, SCREEN_HEIGHT-ARENA_MARGIN, GRID_COLOR, 1)
         for y in range(GROUND_Y, SCREEN_HEIGHT-ARENA_MARGIN+1, GRID_SPACING):
             arcade.draw_line(ARENA_MARGIN, y, SCREEN_WIDTH-ARENA_MARGIN, y, GRID_COLOR, 1)
 
     def _draw_telegraphs(self):
-        # Bombers
         for e in self.enemy_list:
             if isinstance(e, Bomber):
                 for (x,y,r,t,kind) in e.telegraphs:
                     alpha = int(60 + 120*(t/0.9))
                     arcade.draw_circle_filled(x, y, r, DANGER_FILL)
                     arcade.draw_circle_outline(x, y, r, (*DANGER_EDGE[:3], alpha), 3)
-        # Boss
         for b in self.boss_list:
             for (x,y,r,t,kind) in b.telegraphs:
                 alpha = int(60 + 120*(t/0.9))
                 arcade.draw_circle_filled(x, y, r, DANGER_FILL)
                 arcade.draw_circle_outline(x, y, r, (*DANGER_EDGE[:3], alpha), 3)
 
-    def _draw_player_outline(self):
-        # simple white outline for clarity
+    def _draw_outlines(self):
         arcade.draw_circle_outline(self.player.center_x, self.player.center_y, PLAYER_RADIUS+2, PLAYER_OUT, 2)
-
-    def _draw_enemy_outlines(self):
         for e in self.enemy_list:
             arcade.draw_circle_outline(e.center_x, e.center_y, e.width/2+2, ENEMY_OUT, 2)
         for b in self.boss_list:
             arcade.draw_circle_outline(b.center_x, b.center_y, b.width/2+3, BOSS_OUT, 3)
+
+    def _draw_health_bars(self):
+        # Player health bar just above head
+        px, py = self.player.center_x, self.player.center_y + PLAYER_RADIUS + 14
+        draw_health_bar(px, py, 60, 8, self.player.hp, self.player.hp_max)
+        # Enemies
+        for e in self.enemy_list:
+            x, y = e.center_x, e.center_y + e.width/2 + 10
+            draw_health_bar(x, y, 46, 6, e.hp, e.max_hp)
+        # Boss big bar (top-right) plus floating ring color already handled; keep top bar:
+        if len(self.boss_list):
+            b = self.boss_list[0]
+            bw, bx, by = 460, SCREEN_WIDTH-20-460, SCREEN_HEIGHT-42
+            arcade.draw_lrbt_rectangle_outline(bx-2, bx+bw+2, by-12, by+12, arcade.color.WHITE, 2)
+            fill_w = int(bw * b.hp_norm())
+            if fill_w>0:
+                arcade.draw_rectangle_filled(bx+fill_w/2, by, fill_w, 20, arcade.color.RED)
+            # cached text
+            self.hud_boss.position = (bx + bw/2, by-10)
+            draw_text_shadowed(self.hud_boss, self.hud_boss.x, self.hud_boss.y)
 
     def on_draw(self):
         self.clear()
@@ -471,15 +531,14 @@ class GameView(arcade.View):
 
         # Sprites
         self.player_list.draw()
-        self._draw_player_outline()
+        self._draw_outlines()
         self.enemy_list.draw()
-        self._draw_enemy_outlines()
         self.boss_list.draw()
         self.bullets.draw()
         self.enemy_bullets.draw()
         self.xp_orbs.draw()
 
-        # Particles (manual: apply alpha decay)
+        # Particles (alpha decay)
         for p in list(self.particles):
             life = getattr(p, "life", 0.0)
             if life <= 0:
@@ -490,13 +549,15 @@ class GameView(arcade.View):
                 p.center_x = snap(p.center_x + getattr(p, "change_x", 0.0))
                 p.center_y = snap(p.center_y + getattr(p, "change_y", 0.0))
                 p.life = life - 1/60
-
         self.particles.draw()
 
-        # Crosshair (always visible)
+        # Crosshair
         arcade.draw_circle_outline(self.player.aim_x, self.player.aim_y, 11, arcade.color.LIGHT_GRAY, 2)
 
-        # HUD
+        # Floating health bars
+        self._draw_health_bars()
+
+        # HUD (cached Text objects)
         self._draw_hud()
 
         # Intro/pause overlays
@@ -504,39 +565,40 @@ class GameView(arcade.View):
             a = int(min(self.intro_t*400, 220))
             arcade.draw_rectangle_filled(SCREEN_WIDTH/2, SCREEN_HEIGHT/2, SCREEN_WIDTH, SCREEN_HEIGHT, (0,0,0,a))
             title = f"Wave {self.wave}" if self.wave < TOTAL_WAVES else "Boss"
-            text_shadowed(title, SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 8, arcade.color.WHITE, 30, anchor_x="center")
+            t = arcade.Text(title, 0, 0, arcade.color.WHITE, 30, anchor_x="center"); t._orig_color=arcade.color.WHITE
+            draw_text_shadowed(t, SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 8)
 
         if self.paused:
             arcade.draw_rectangle_filled(SCREEN_WIDTH/2, SCREEN_HEIGHT/2, 560, 180, (0,0,0,200))
-            text_shadowed("PAUSED", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 26, arcade.color.GOLD, 28, anchor_x="center")
-            text_shadowed("ESC: resume   R: restart   M: menu", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 12, arcade.color.LIGHT_GRAY, 14, anchor_x="center")
+            t1 = arcade.Text("PAUSED", 0,0, arcade.color.GOLD, 28, anchor_x="center"); t1._orig_color=arcade.color.GOLD
+            t2 = arcade.Text("ESC: resume   R: restart   M: menu", 0,0, arcade.color.LIGHT_GRAY, 14, anchor_x="center"); t2._orig_color=arcade.color.LIGHT_GRAY
+            draw_text_shadowed(t1, SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 26)
+            draw_text_shadowed(t2, SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 12)
 
     def _draw_hud(self):
-        # HP
-        text_shadowed(f"HP {self.player.hp}/{self.player.hp_max}", 12, SCREEN_HEIGHT-24, UI_COLOR, 18)
-        # XP
+        # HP / LV / Wave / Score / Dash
+        self.hud_hp.text    = f"HP {self.player.hp}/{self.player.hp_max}"
+        self.hud_lv.text    = f"LV {self.level}"
+        self.hud_wave.text  = f"Wave {self.wave}/{TOTAL_WAVES}"
+        self.hud_score.text = f"Score {self.score}"
+        dash_msg = "Ready" if self.dash_timer.ready() else f"{self.dash_timer.t:.1f}s"
+        self.hud_dash.text  = f"Dash: {dash_msg}"
+
+        # shadowed draws
+        draw_text_shadowed(self.hud_hp,   self.hud_hp.x,   self.hud_hp.y)
+        draw_text_shadowed(self.hud_lv,   self.hud_lv.x,   self.hud_lv.y)
+
+        # XP bar
         need = self._xp_needed()
-        text_shadowed(f"LV {self.level}", 12, SCREEN_HEIGHT-48, UI_COLOR, 14)
         bar_w = 220
         filled = int(bar_w * (self.xp/need))
         arcade.draw_lrbt_rectangle_outline(12, 12+bar_w, SCREEN_HEIGHT-62, SCREEN_HEIGHT-48, arcade.color.WHITE, 2)
         if filled>0:
             arcade.draw_rectangle_filled(12+filled/2, SCREEN_HEIGHT-55, filled, 12, arcade.color.SPRING_BUD)
-        # Wave & score
-        text_shadowed(f"Wave {self.wave}/{TOTAL_WAVES}", 12, SCREEN_HEIGHT-82, UI_COLOR, 14)
-        text_shadowed(f"Score {self.score}", 12, SCREEN_HEIGHT-102, UI_COLOR, 14)
-        # Dash indicator
-        dash_msg = "Ready" if self.dash_timer.ready() else f"{self.dash_timer.t:.1f}s"
-        text_shadowed(f"Dash: {dash_msg}", 12, SCREEN_HEIGHT-122, arcade.color.LIGHT_GRAY, 12)
-        # Boss bar
-        if len(self.boss_list):
-            b: Boss = self.boss_list[0]
-            bw, bx, by = 460, SCREEN_WIDTH-20-460, SCREEN_HEIGHT-42
-            arcade.draw_lrbt_rectangle_outline(bx-2, bx+bw+2, by-12, by+12, arcade.color.WHITE, 2)
-            fill_w = int(bw * b.hp_norm())
-            if fill_w>0:
-                arcade.draw_rectangle_filled(bx+fill_w/2, by, fill_w, 20, arcade.color.RED)
-            text_shadowed("BOSS", bx + bw/2, by-10, arcade.color.WHITE, 12, anchor_x="center")
+
+        draw_text_shadowed(self.hud_wave, self.hud_wave.x, self.hud_wave.y)
+        draw_text_shadowed(self.hud_score,self.hud_score.x,self.hud_score.y)
+        draw_text_shadowed(self.hud_dash, self.hud_dash.x, self.hud_dash.y)
 
     # ---------- update ----------
     def on_update(self, dt: float):
@@ -566,7 +628,7 @@ class GameView(arcade.View):
         if self.player.bottom < GROUND_Y: self.player.bottom = GROUND_Y
         if self.player.top > SCREEN_HEIGHT-ARENA_MARGIN: self.player.top = SCREEN_HEIGHT-ARENA_MARGIN
 
-        # bullets & xp
+        # bullets & xp (Arcade passes delta_time)
         self.bullets.update()
         self.enemy_bullets.update()
         self.xp_orbs.update()
@@ -695,28 +757,35 @@ class GameView(arcade.View):
         for e in list(self.enemy_list):
             hits = arcade.check_for_collision_with_list(e, self.bullets)
             if hits:
+                total_hits = 0
                 for b in hits:
+                    total_hits += 1
                     b.remove_from_sprite_lists()
-                    dmg = self.player.damage * (2 if random.random()<self.player.crit_chance else 1)
-                    e.hp -= dmg
+                if total_hits:
+                    dmg_per = self.player.damage * (2 if random.random()<self.player.crit_chance else 1)
+                    e.hp -= dmg_per * total_hits
                     e.apply_status(self.player.burn_on_hit, self.player.slow_on_hit)
-                self._hit_particles(e.center_x, e.center_y, color=arcade.color.GOLD)
+                    self._hit_particles(e.center_x, e.center_y, color=arcade.color.GOLD)
                 if e.hp <= 0:
                     self._enemy_die(e)
         # player bullets vs boss
         if len(self.boss_list):
             boss = self.boss_list[0]
             hits = arcade.check_for_collision_with_list(boss, self.bullets)
-            for proj in hits:
-                proj.remove_from_sprite_lists()
-                dmg = self.player.damage * (2 if random.random()<self.player.crit_chance else 1)
-                boss.hp -= dmg
-                self._hit_particles(boss.center_x, boss.center_y, color=arcade.color.GOLD)
-                self.player.combo = min(5, self.player.combo+1)
-                self.player.combo_t = 3.0
-                self.score += 8 * self.player.combo
-            if boss.hp <= 0:
-                self._boss_die(boss)
+            if hits:
+                total = 0
+                for proj in hits:
+                    proj.remove_from_sprite_lists()
+                    total += 1
+                if total:
+                    dmg_per = self.player.damage * (2 if random.random()<self.player.crit_chance else 1)
+                    boss.hp -= dmg_per * total
+                    self._hit_particles(boss.center_x, boss.center_y, color=arcade.color.GOLD)
+                    self.player.combo = min(5, self.player.combo+1)
+                    self.player.combo_t = 3.0
+                    self.score += 8 * self.player.combo * total
+                if boss.hp <= 0:
+                    self._boss_die(boss)
         # enemy bullets vs player
         pb = arcade.check_for_collision_with_list(self.player, self.enemy_bullets)
         for proj in pb:
