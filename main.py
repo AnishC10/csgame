@@ -8,12 +8,12 @@ from typing import Optional, List, Tuple
 # ---------------------------------------------------------------------------
 # Window / arena
 # ---------------------------------------------------------------------------
-SCREEN_WIDTH, SCREEN_HEIGHT = 1000, 640
+SCREEN_WIDTH, SCREEN_HEIGHT = 1250, 800
 SCREEN_TITLE = "StoryQuest+++"
 ARENA_MARGIN, GROUND_Y, GRID_SPACING = 48, 56, 32
 
 # Player
-PLAYER_RADIUS, PLAYER_MAX_HP = 19, 1000
+PLAYER_RADIUS, PLAYER_MAX_HP = 19, 10
 PLAYER_BASE_SPEED, PLAYER_BASE_DASH_SPEED = 4.0, 12.0
 PLAYER_DASH_TIME, PLAYER_DASH_IFRAME, PLAYER_DASH_CD = 0.18, 0.36, 1.2
 MELEE_CD, MELEE_RANGE, MELEE_DAMAGE = 0.5, 46, 3
@@ -399,11 +399,21 @@ class GameOverView(arcade.View):
 
     def on_key_press(self, key, modifiers):
         if key == arcade.key.R:
+            # Full restart: wipe persistent player so perks/HP reset
+            if hasattr(self.window, "player_persistent"):
+                self.window.player_persistent = None
+
             g = GameView(1)
             g.setup()
             self.window.show_view(g)
+
         elif key == arcade.key.M:
+            # Going back to menu should also mean a fresh future run
+            if hasattr(self.window, "player_persistent"):
+                self.window.player_persistent = None
+
             self.window.show_view(MenuView())
+
         elif key == arcade.key.ESCAPE:
             arcade.close_window()
 
