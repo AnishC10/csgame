@@ -10,7 +10,7 @@
 
 ## 👥 Team Members
 
-* The code appears to be the work of a **single developer**.
+* Anish Chakraborty, Tushar Janarthanan Ramesh Babu, Aditya Rustagi.
 
 ---
 
