@@ -13,7 +13,7 @@ SCREEN_TITLE = "StoryQuest+++"
 ARENA_MARGIN, GROUND_Y, GRID_SPACING = 48, 56, 32
 
 # Player
-PLAYER_RADIUS, PLAYER_MAX_HP = 19, 10
+PLAYER_RADIUS, PLAYER_MAX_HP = 19, 1000
 PLAYER_BASE_SPEED, PLAYER_BASE_DASH_SPEED = 4.0, 12.0
 PLAYER_DASH_TIME, PLAYER_DASH_IFRAME, PLAYER_DASH_CD = 0.18, 0.36, 1.2
 MELEE_CD, MELEE_RANGE, MELEE_DAMAGE = 0.5, 46, 3
@@ -762,7 +762,7 @@ class GameView(arcade.View):
                 if int(b.phase_timer * 10) % 16 == 0 and b.phase_timer % 0.1 < dt:
                     dx, dy = self.player.center_x - b.center_x, self.player.center_y - b.center_y
                     base = math.atan2(dy, dx)
-                    spread = math.radians(54)
+                    spread = math.radians(90)
                     for i in range(9):
                         ang = base + spread * (i / 8 - 0.5)
                         self.enemy_bullets.append(
@@ -776,7 +776,7 @@ class GameView(arcade.View):
         for (x, y, r, t, k) in b.telegraphs:
             t -= dt
             if t <= 0:
-                self._spawn_ring_bullets(x, y, r, count=24 if k == "RING" else 36, speed=7.0)
+                self._spawn_ring_bullets(x, y, r, count=16 if k == "RING" else 18, speed=7.0)
                 self.shake_t = 0.18
             else:
                 nt.append((x, y, r, t, k))
@@ -796,7 +796,17 @@ class GameView(arcade.View):
                         proj.pierce_left -= 1
                     else:
                         proj.remove_from_sprite_lists()
-                dmg_per = self.player.damage * (2 if random.random() < self.player.crit_chance else 1)
+                # Check if bullet is a spread pellet
+                is_spread = hasattr(proj, "spread_pellet")
+
+                # ⭐ ENTER YOUR NERF AMOUNT HERE ⭐
+                NERF_MULT = 0.6  # 60% damage for spread pellets
+
+                # Apply nerf ONLY to spread pellets
+                base = self.player.damage * (NERF_MULT if is_spread else 1.0)
+
+                # Crit multiplier unchanged
+                dmg_per = base * (2 if random.random() < self.player.crit_chance else 1)
                 e.hp -= dmg_per * len(hits)
                 e.apply_status(self.player.burn_on_hit, self.player.slow_on_hit)
                 self._hit_particles(e.center_x, e.center_y, color=arcade.color.GOLD)
@@ -907,11 +917,21 @@ class GameView(arcade.View):
             for i in range(SHOTGUN_PELLETS):
                 t = i / (SHOTGUN_PELLETS - 1) - 0.5
                 a = math.atan2(vy, vx) + spread * t
-                self.bullets.append(
-                    Bullet(self.player.center_x, self.player.center_y,
-                           math.cos(a), math.sin(a),
-                           self.player.bullet_speed, BULLET_COLOR_PLAYER, "player",
-                           pierce_left=pierce_left))
+
+                b = Bullet(
+                    self.player.center_x, self.player.center_y,
+                    math.cos(a), math.sin(a),
+                    self.player.bullet_speed,
+                    BULLET_COLOR_PLAYER,
+                    "player",
+                    pierce_left=pierce_left
+                )
+
+                # ⭐ NERF: mark this bullet as a spread-shot pellet
+                b.spread_pellet = True  # <-- added flag
+
+                self.bullets.append(b)
+
         else:
             self.bullets.append(
                 Bullet(self.player.center_x, self.player.center_y, vx, vy,
