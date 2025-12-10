@@ -1,4 +1,4 @@
-import arcade
+import arcadea
 import math
 import random
 import time
