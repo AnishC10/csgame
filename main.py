@@ -8,12 +8,12 @@ from typing import Optional, List, Tuple
 # ---------------------------------------------------------------------------
 # Window / arena
 # ---------------------------------------------------------------------------
-SCREEN_WIDTH, SCREEN_HEIGHT = 1250, 800
+SCREEN_WIDTH, SCREEN_HEIGHT = 1000, 640
 SCREEN_TITLE = "StoryQuest+++"
 ARENA_MARGIN, GROUND_Y, GRID_SPACING = 48, 56, 32
 
 # Player
-PLAYER_RADIUS, PLAYER_MAX_HP = 19, 10
+PLAYER_RADIUS, PLAYER_MAX_HP = 19, 1
 PLAYER_BASE_SPEED, PLAYER_BASE_DASH_SPEED = 4.0, 12.0
 PLAYER_DASH_TIME, PLAYER_DASH_IFRAME, PLAYER_DASH_CD = 0.18, 0.36, 1.2
 MELEE_CD, MELEE_RANGE, MELEE_DAMAGE = 0.5, 46, 3
@@ -195,7 +195,7 @@ class Shooter(Enemy):
     def __init__(self, x, y):
         super().__init__("enemy2.png", scale=0.08)
         self.center_x, self.center_y, self.t = x, y, random.random() * 5
-        self.hp = self.max_hp = 7
+        self.hp = self.max_hp = 12
 
     def step(self, player, dt):
         self.t += dt
@@ -208,7 +208,7 @@ class Bomber(Enemy):
     def __init__(self, x, y):
         super().__init__("enemy3.png", scale=0.08)
         self.center_x, self.center_y = x, y
-        self.hp = self.max_hp = 8
+        self.hp = self.max_hp = 10
         self.telegraphs, self.t = [], 0.0
 
     def step(self, player, dt):
@@ -250,11 +250,11 @@ class Boss(arcade.Sprite):
     def __init__(self, giant=False):
         tex = "boss.png"
         # smaller than before
-        scale = 0.25 if giant else 0.25
+        scale = 0.25 if giant else 0.15
         super().__init__(asset(tex), scale=scale)
 
         self.center_x, self.center_y = SCREEN_WIDTH / 2, SCREEN_HEIGHT - 150
-        self.max_hp = 480 if giant else 240
+        self.max_hp = 4800 if giant else 2400
         self.hp, self.phase_timer, self.telegraphs, self.phase = self.max_hp, 0.0, [], 1
         self.giant = giant
 
@@ -399,21 +399,16 @@ class GameOverView(arcade.View):
 
     def on_key_press(self, key, modifiers):
         if key == arcade.key.R:
-            # Full restart: wipe persistent player so perks/HP reset
-            if hasattr(self.window, "player_persistent"):
-                self.window.player_persistent = None
+            # Reset the persistent player so a fresh one is created on restart
+            self.window.player_persistent = None
 
             g = GameView(1)
             g.setup()
             self.window.show_view(g)
-
         elif key == arcade.key.M:
-            # Going back to menu should also mean a fresh future run
-            if hasattr(self.window, "player_persistent"):
-                self.window.player_persistent = None
-
+            # Also reset the persistent player when returning to the main menu
+            self.window.player_persistent = None
             self.window.show_view(MenuView())
-
         elif key == arcade.key.ESCAPE:
             arcade.close_window()
 
@@ -797,7 +792,7 @@ class GameView(arcade.View):
         if b.giant:
             if int(b.phase_timer * 10) % 8 == 0 and b.phase_timer % 0.1 < dt:
                 angle = random.uniform(0, math.tau)
-                self.enemy_bullets.append(
+                self.enemy_ws.append(
                     Bullet(b.center_x, b.center_y, math.cos(angle), math.sin(angle),
                            7.5, arcade.color.LIGHT_CORAL, "enemy"))
             if random.random() < 0.015:
@@ -898,7 +893,7 @@ class GameView(arcade.View):
                     if self.player.take_hit(1):
                         self.flash_t = 0.15
                         self.shake_t = 0.12
-                        self.player.iframes = 0.5
+                        self.player.iframes = 1
                         if self.player.hp <= 0:
                             self._lose()
                             return
@@ -913,7 +908,7 @@ class GameView(arcade.View):
                     if self.player.take_hit(1):
                         self.flash_t = 0.15
                         self.shake_t = 0.12
-                        self.player.iframes = 0.5
+                        self.player.iframes = 1
                         if self.player.hp <= 0:
                             self._lose()
                             return
