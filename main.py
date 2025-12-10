@@ -105,7 +105,7 @@ def perk_pool():
 class Player(arcade.Sprite):
     def __init__(self):
         # 1/10th of previous 0.25 scale
-        super().__init__(asset("Mattguitar(main).jpg"), scale=0.2)
+        super().__init__(asset("Mattguitar(main).jpg"), scale=0.135)
         self.hp_max, self.hp, self.speed = PLAYER_MAX_HP, PLAYER_MAX_HP, PLAYER_BASE_SPEED
         self.damage, self.fire_cd, self.bullet_speed, self.pierce = BASE_DAMAGE, BASE_FIRE_CD, BASE_BULLET_SPEED, 0
         self.has_spread, self.crit_chance, self.burn_on_hit = False, 0.0, False
@@ -148,7 +148,7 @@ class Player(arcade.Sprite):
 
 class Enemy(arcade.Sprite):
     def __init__(self, texture_name: str, scale: float):
-        super().__init__(asset(texture_name), scale=scale)
+        super().__init__(asset(texture_name), scale=0.08)
         self.hp = self.max_hp = 1
         self.slow_t = self.burn_t = self.burn_tick = 0.0
         self.wander_phase = random.uniform(0, math.tau)
@@ -193,7 +193,7 @@ class Chaser(Enemy):
 
 class Shooter(Enemy):
     def __init__(self, x, y):
-        super().__init__("enemy2.png", scale=0.1)
+        super().__init__("enemy2.png", scale=0.08)
         self.center_x, self.center_y, self.t = x, y, random.random() * 5
         self.hp = self.max_hp = 7
 
@@ -206,7 +206,7 @@ class Shooter(Enemy):
 
 class Bomber(Enemy):
     def __init__(self, x, y):
-        super().__init__("enemy3.png", scale=0.1)
+        super().__init__("enemy3.png", scale=0.08)
         self.center_x, self.center_y = x, y
         self.hp = self.max_hp = 8
         self.telegraphs, self.t = [], 0.0
@@ -250,7 +250,7 @@ class Boss(arcade.Sprite):
     def __init__(self, giant=False):
         tex = "boss.png"
         # smaller than before
-        scale = 0.45 if giant else 0.30
+        scale = 0.25 if giant else 0.25
         super().__init__(asset(tex), scale=scale)
 
         self.center_x, self.center_y = SCREEN_WIDTH / 2, SCREEN_HEIGHT - 150
