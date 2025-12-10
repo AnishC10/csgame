@@ -172,7 +172,7 @@ class Enemy(arcade.Sprite):
 
 class Chaser(Enemy):
     def __init__(self, x, y, elite=False):
-        tex = "enemy4.png" if elite else "enemy1.png"
+        tex = "enemy1.png"
         # smaller than before
         scale = 0.1 if elite else 0.05
         super().__init__(tex, scale)
