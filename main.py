@@ -3,7 +3,7 @@ import math
 import random
 import time
 import os
-from typing import Optional, List, Tuple
+
 
 # ---------------------------------------------------------------------------
 # Window / arena
@@ -13,10 +13,10 @@ SCREEN_TITLE = "StoryQuest+++"
 ARENA_MARGIN, GROUND_Y, GRID_SPACING = 48, 56, 32
 
 # Player
-PLAYER_RADIUS, PLAYER_MAX_HP = 19, 1
+PLAYER_RADIUS, PLAYER_MAX_HP = 19, 40
 PLAYER_BASE_SPEED, PLAYER_BASE_DASH_SPEED = 4.0, 12.0
 PLAYER_DASH_TIME, PLAYER_DASH_IFRAME, PLAYER_DASH_CD = 0.18, 0.36, 1.2
-MELEE_CD, MELEE_RANGE, MELEE_DAMAGE = 0.5, 46, 3
+MELEE_CD, MELEE_RANGE, MELEE_DAMAGE = 0.5, 46, 7
 
 # Weapons
 BASE_BULLET_SPEED, BASE_FIRE_CD, BASE_DAMAGE = 11.5, 0.26, 3
@@ -254,7 +254,7 @@ class Boss(arcade.Sprite):
         super().__init__(asset(tex), scale=scale)
 
         self.center_x, self.center_y = SCREEN_WIDTH / 2, SCREEN_HEIGHT - 150
-        self.max_hp = 4800 if giant else 2400
+        self.max_hp = 3000 if giant else 2400
         self.hp, self.phase_timer, self.telegraphs, self.phase = self.max_hp, 0.0, [], 1
         self.giant = giant
 
@@ -792,7 +792,7 @@ class GameView(arcade.View):
         if b.giant:
             if int(b.phase_timer * 10) % 8 == 0 and b.phase_timer % 0.1 < dt:
                 angle = random.uniform(0, math.tau)
-                self.enemy_ws.append(
+                self.enemy_bullets.append(
                     Bullet(b.center_x, b.center_y, math.cos(angle), math.sin(angle),
                            7.5, arcade.color.LIGHT_CORAL, "enemy"))
             if random.random() < 0.015:
@@ -827,7 +827,7 @@ class GameView(arcade.View):
         for (x, y, r, t, k) in b.telegraphs:
             t -= dt
             if t <= 0:
-                self._spawn_ring_bullets(x, y, r, count=16 if k == "RING" else 18, speed=7.0)
+                self._spawn_ring_bullets(x, y, r, count=12 if k == "RING" else 18, speed=5.0)
                 self.shake_t = 0.18
             else:
                 nt.append((x, y, r, t, k))
@@ -893,7 +893,7 @@ class GameView(arcade.View):
                     if self.player.take_hit(1):
                         self.flash_t = 0.15
                         self.shake_t = 0.12
-                        self.player.iframes = 1
+                        self.player.iframes = 2
                         if self.player.hp <= 0:
                             self._lose()
                             return
@@ -908,7 +908,7 @@ class GameView(arcade.View):
                     if self.player.take_hit(1):
                         self.flash_t = 0.15
                         self.shake_t = 0.12
-                        self.player.iframes = 1
+                        self.player.iframes = 2
                         if self.player.hp <= 0:
                             self._lose()
                             return
