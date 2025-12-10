@@ -20,8 +20,13 @@ StoryQuest+++ is a fast-paced, top-down arcade survival shooter built with the P
 
 ### Game Objectives:
 
-* **Levels 1 & 2:** Reach a score of **90** before the boss wave is cleared.
-* **Level 3:** Defeat the **Giant Boss**.
+The game is structured across 3 persistent levels.
+
+| Game Level | Sublevels (Waves) | Final Boss | Advancement / Win Condition |
+| :--- | :--- | :--- | :--- |
+| **Level 1** | **4 Waves** of standard enemies (Chasers, Shooters, Bombers). | Standard Boss (Wave 5). | Defeat the Wave 5 Boss AND achieve a **Score of 90+**. |
+| **Level 2** | **4 Waves** of stronger enemies. | Standard Boss (Wave 5). | Defeat the Wave 5 Boss AND achieve a **Score of 90+**. |
+| **Level 3** | **1 Ultimate Boss Fight**. | Giant Boss. | **Defeat the Giant Boss** to achieve overall Victory. |
 
 ---
 
