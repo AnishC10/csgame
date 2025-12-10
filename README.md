@@ -1,10 +1,10 @@
-# StoryQuest+++
+# StoryQuest
 
 ---
 
 ## 🕹️ Game Title
 
-**StoryQuest+++**
+**StoryQuest**
 
 ---
 
