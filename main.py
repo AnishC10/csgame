@@ -416,6 +416,11 @@ class GameView(arcade.View):
         super().__init__()
         self.game_level = game_level
         self.shake_t = self.flash_t = 0.0
+
+        # Background sprite + list for Arcade 3.x
+        self.bg_sprite = None
+        self.bg_list = arcade.SpriteList()
+
         self.player = None
         self.player_list = arcade.SpriteList()
         self.enemy_list = arcade.SpriteList()
@@ -446,12 +451,47 @@ class GameView(arcade.View):
 
     def setup(self):
         arcade.set_background_color(BG_BOTTOM)
+
+        # ---------------------------------------------------------
+        # Load level-specific gradient background image
+        # ---------------------------------------------------------
+        bg_files = {
+            1: "backgrounds/bluegradient.jpg",
+            2: "backgrounds/greengradient.png",
+            3: "backgrounds/redgradient.png",
+        }
+        bg_path = asset(bg_files[self.game_level])
+        self.bg_sprite = arcade.Sprite(bg_path)
+        self.bg_sprite.center_x = SCREEN_WIDTH / 2
+        self.bg_sprite.center_y = SCREEN_HEIGHT / 2
+        self.bg_sprite.width = SCREEN_WIDTH
+        self.bg_sprite.height = SCREEN_HEIGHT
+
+        self.bg_list = arcade.SpriteList()
+        self.bg_list.append(self.bg_sprite)
+        # ---------------------------------------------------------
+
         for lst in [self.player_list, self.enemy_list, self.boss_list, self.bullets,
                     self.enemy_bullets, self.xp_orbs, self.pickups, self.particles]:
             lst.clear()
-        self.player = Player()
-        self.player.center_x, self.player.center_y = SCREEN_WIDTH / 2, GROUND_Y + 60
+        # --------------------------------------------------
+        # Persistent player — do NOT reset perks between levels/waves
+        # --------------------------------------------------
+        if self.window.player_persistent is None:
+            # First time creating player
+            self.player = Player()
+            self.window.player_persistent = self.player
+        else:
+            # Reuse upgraded persistent player
+            self.player = self.window.player_persistent
+
+        # Reset ONLY position, not perks/stats
+        self.player.center_x = SCREEN_WIDTH / 2
+        self.player.center_y = GROUND_Y + 60
+
         self.player_list.append(self.player)
+        # --------------------------------------------------
+
         self.fire_timer, self.dash_timer, self.melee_timer = (
             Timer(self.player.fire_cd), Timer(self.player.dash_cd), Timer(MELEE_CD)
         )
@@ -480,8 +520,7 @@ class GameView(arcade.View):
             self.boss_list.append(Boss(giant=False))
 
     def _draw_background(self):
-        arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT, BG_BOTTOM)
-        arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, SCREEN_HEIGHT * 0.55, SCREEN_HEIGHT, BG_TOP)
+        # Now only draws the arena strip, border, and grid.
         arcade.draw_lrbt_rectangle_filled(SCREEN_WIDTH / 2 - (SCREEN_WIDTH - 40) / 2,
                                           SCREEN_WIDTH / 2 + (SCREEN_WIDTH - 40) / 2,
                                           GROUND_Y - 46, GROUND_Y + 46, arcade.color.DARK_OLIVE_GREEN)
@@ -529,7 +568,14 @@ class GameView(arcade.View):
 
     def on_draw(self):
         self.clear()
+
+        # Draw gradient background image
+        if self.bg_sprite and self.bg_list:
+            self.bg_list.draw()
+
+        # Then arena + grid overlay
         self._draw_background()
+
         self._draw_telegraphs()
         self.player_list.draw()
         self._draw_outlines()
@@ -799,13 +845,8 @@ class GameView(arcade.View):
                 # Check if bullet is a spread pellet
                 is_spread = hasattr(proj, "spread_pellet")
 
-                # ⭐ ENTER YOUR NERF AMOUNT HERE ⭐
                 NERF_MULT = 0.6  # 60% damage for spread pellets
-
-                # Apply nerf ONLY to spread pellets
                 base = self.player.damage * (NERF_MULT if is_spread else 1.0)
-
-                # Crit multiplier unchanged
                 dmg_per = base * (2 if random.random() < self.player.crit_chance else 1)
                 e.hp -= dmg_per * len(hits)
                 e.apply_status(self.player.burn_on_hit, self.player.slow_on_hit)
@@ -926,12 +967,8 @@ class GameView(arcade.View):
                     "player",
                     pierce_left=pierce_left
                 )
-
-                # ⭐ NERF: mark this bullet as a spread-shot pellet
-                b.spread_pellet = True  # <-- added flag
-
+                b.spread_pellet = True
                 self.bullets.append(b)
-
         else:
             self.bullets.append(
                 Bullet(self.player.center_x, self.player.center_y, vx, vy,
@@ -983,6 +1020,10 @@ class GameView(arcade.View):
     def _advance_level(self):
         self.game_level += 1
         gv = GameView(self.game_level)
+
+        # Keep same window + same player
+        gv.window = self.window
+
         gv.setup()
         self.window.show_view(gv)
 
@@ -1058,7 +1099,12 @@ class GameView(arcade.View):
 # ---------------------------------------------------------------------------
 def main():
     window = arcade.Window(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE)
+
+    # Create persistent player storage
+    window.player_persistent = None
+
     window.show_view(MenuView())
+
     arcade.run()
 
 
