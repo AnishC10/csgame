@@ -13,7 +13,7 @@ SCREEN_TITLE = "StoryQuest+++"
 ARENA_MARGIN, GROUND_Y, GRID_SPACING = 48, 56, 32
 
 # Player
-PLAYER_RADIUS, PLAYER_MAX_HP = 19, 1000
+PLAYER_RADIUS, PLAYER_MAX_HP = 19, 10
 PLAYER_BASE_SPEED, PLAYER_BASE_DASH_SPEED = 4.0, 12.0
 PLAYER_DASH_TIME, PLAYER_DASH_IFRAME, PLAYER_DASH_CD = 0.18, 0.36, 1.2
 MELEE_CD, MELEE_RANGE, MELEE_DAMAGE = 0.5, 46, 3
@@ -173,7 +173,6 @@ class Enemy(arcade.Sprite):
 class Chaser(Enemy):
     def __init__(self, x, y, elite=False):
         tex = "enemy1.png"
-        # smaller than before
         scale = 0.1 if elite else 0.05
         super().__init__(tex, scale)
         self.center_x, self.center_y = x, y
@@ -249,7 +248,6 @@ class Pickup(arcade.SpriteCircle):
 class Boss(arcade.Sprite):
     def __init__(self, giant=False):
         tex = "boss.png"
-        # smaller than before
         scale = 0.25 if giant else 0.25
         super().__init__(asset(tex), scale=scale)
 
@@ -412,11 +410,13 @@ class GameOverView(arcade.View):
 # Game View
 # ---------------------------------------------------------------------------
 class GameView(arcade.View):
-    def __init__(self, game_level=1):
+    def __init__(self, game_level=1, carry_state=None):
         super().__init__()
         self.game_level = game_level
+        self.carry_state = carry_state  # used when coming from previous level
+
         self.shake_t = self.flash_t = 0.0
-        self.player = None
+        self.player: Optional[Player] = None
         self.player_list = arcade.SpriteList()
         self.enemy_list = arcade.SpriteList()
         self.boss_list = arcade.SpriteList()
@@ -432,7 +432,9 @@ class GameView(arcade.View):
         self.melee_timer = Timer(MELEE_CD)
         self.wave = 1
         self.wave_clear_bonus_pending = False
-        self.xp = self.level = self.score = 0
+        self.xp = 0
+        self.level = 1
+        self.score = 0
         self.paused = False
         self.start_time = self.end_time = 0.0
         self.intro_t = 0.9
@@ -446,18 +448,62 @@ class GameView(arcade.View):
 
     def setup(self):
         arcade.set_background_color(BG_BOTTOM)
-        for lst in [self.player_list, self.enemy_list, self.boss_list, self.bullets,
+
+        # Clear level-specific objects (NOT cross-level state)
+        for lst in [self.enemy_list, self.boss_list, self.bullets,
                     self.enemy_bullets, self.xp_orbs, self.pickups, self.particles]:
             lst.clear()
-        self.player = Player()
+
+        # Fresh run OR restart: no carry_state
+        if self.carry_state is None:
+            # new player with base stats
+            self.player = Player()
+            self.wave = 1
+            self.xp = 0
+            self.level = 1
+            self.score = 0
+        else:
+            # create a new Player and copy stats from previous level's player
+            old_p: Player = self.carry_state["player"]
+            self.player = Player()
+            self.player.hp_max = old_p.hp_max
+            self.player.hp = old_p.hp
+            self.player.speed = old_p.speed
+            self.player.damage = old_p.damage
+            self.player.fire_cd = old_p.fire_cd
+            self.player.bullet_speed = old_p.bullet_speed
+            self.player.pierce = old_p.pierce
+            self.player.has_spread = old_p.has_spread
+            self.player.crit_chance = old_p.crit_chance
+            self.player.burn_on_hit = old_p.burn_on_hit
+            self.player.slow_on_hit = old_p.slow_on_hit
+            self.player.regen_on = old_p.regen_on
+            self.player.magnet_radius = old_p.magnet_radius
+            self.player.dash_speed = old_p.dash_speed
+            self.player.dash_time = old_p.dash_time
+            self.player.dash_iframe = old_p.dash_iframe
+            self.player.shield = old_p.shield
+
+            self.wave = 1
+            self.xp = self.carry_state["xp"]
+            self.level = self.carry_state["level"]
+            self.score = self.carry_state["score"]
+
         self.player.center_x, self.player.center_y = SCREEN_WIDTH / 2, GROUND_Y + 60
+        self.player_list = arcade.SpriteList()
         self.player_list.append(self.player)
-        self.fire_timer, self.dash_timer, self.melee_timer = (
-            Timer(self.player.fire_cd), Timer(self.player.dash_cd), Timer(MELEE_CD)
-        )
-        self.wave, self.wave_clear_bonus_pending, self.xp, self.level = 1, False, 0, 1
-        self.score, self.paused, self.intro_t = 0, False, 0.9
-        self.start_time, self.shake_t, self.flash_t = time.time(), 0.0, 0.0
+
+        self.fire_timer = Timer(self.player.fire_cd)
+        self.dash_timer = Timer(self.player.dash_cd)
+        self.melee_timer = Timer(MELEE_CD)
+
+        self.wave_clear_bonus_pending = False
+        self.intro_t = 0.9
+        self.start_time = time.time()
+
+        # after using carry_state once, clear it so restarts are "fresh"
+        self.carry_state = None
+
         self._spawn_wave(self.wave)
 
     def _spawn_wave(self, w):
@@ -776,7 +822,7 @@ class GameView(arcade.View):
         for (x, y, r, t, k) in b.telegraphs:
             t -= dt
             if t <= 0:
-                self._spawn_ring_bullets(x, y, r, count=16 if k == "RING" else 18, speed=7.0)
+                self._spawn_ring_bullets(x, y, r, count=32 if k == "RING" else 36, speed=7.0)
                 self.shake_t = 0.18
             else:
                 nt.append((x, y, r, t, k))
@@ -796,17 +842,14 @@ class GameView(arcade.View):
                         proj.pierce_left -= 1
                     else:
                         proj.remove_from_sprite_lists()
+
                 # Check if bullet is a spread pellet
                 is_spread = hasattr(proj, "spread_pellet")
+                NERF_MULT = 0.6  # 60% damage for spread bullets
 
-                # ⭐ ENTER YOUR NERF AMOUNT HERE ⭐
-                NERF_MULT = 0.6  # 60% damage for spread pellets
-
-                # Apply nerf ONLY to spread pellets
                 base = self.player.damage * (NERF_MULT if is_spread else 1.0)
-
-                # Crit multiplier unchanged
                 dmg_per = base * (2 if random.random() < self.player.crit_chance else 1)
+
                 e.hp -= dmg_per * len(hits)
                 e.apply_status(self.player.burn_on_hit, self.player.slow_on_hit)
                 self._hit_particles(e.center_x, e.center_y, color=arcade.color.GOLD)
@@ -927,9 +970,8 @@ class GameView(arcade.View):
                     pierce_left=pierce_left
                 )
 
-                # ⭐ NERF: mark this bullet as a spread-shot pellet
-                b.spread_pellet = True  # <-- added flag
-
+                # mark spread pellets so damage can be nerfed
+                b.spread_pellet = True
                 self.bullets.append(b)
 
         else:
@@ -982,7 +1024,15 @@ class GameView(arcade.View):
 
     def _advance_level(self):
         self.game_level += 1
-        gv = GameView(self.game_level)
+
+        carry_state = {
+            "player": self.player,
+            "xp": self.xp,
+            "level": self.level,
+            "score": self.score,
+        }
+
+        gv = GameView(self.game_level, carry_state)
         gv.setup()
         self.window.show_view(gv)
 
@@ -1023,6 +1073,8 @@ class GameView(arcade.View):
             self.paused = not self.paused
         elif key == arcade.key.R:
             if self.paused:
+                # restart current game_level as fresh run
+                self.carry_state = None
                 self.setup()
         elif key == arcade.key.M:
             self.window.show_view(MenuView())
