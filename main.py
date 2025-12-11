@@ -21,7 +21,7 @@ ARENA_MARGIN, GROUND_Y, GRID_SPACING = 48, 56, 32
 # ---------------------------------------------------------------------------
 PLAYER_RADIUS, PLAYER_MAX_HP = 19, 60
 PLAYER_BASE_SPEED, PLAYER_BASE_DASH_SPEED = 4.0, 12.0
-PLAYER_DASH_TIME, PLAYER_DASH_IFRAME, PLAYER_DASH_CD = 0.18, 0.36, 1.2
+PLAYER_DASH_TIME, PLAYER_DASH_IFRAME, PLAYER_DASH_CD = 0.18, 0.5, 1.2
 MELEE_CD, MELEE_RANGE, MELEE_DAMAGE = 0.5, 46, 7
 
 # ---------------------------------------------------------------------------
